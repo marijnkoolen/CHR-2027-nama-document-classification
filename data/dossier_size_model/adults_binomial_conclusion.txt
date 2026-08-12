@@ -1,0 +1,3 @@
+likelihood=binomial
+mean_winner=step_trend
+conclusion=no_extra_binomial_dispersion

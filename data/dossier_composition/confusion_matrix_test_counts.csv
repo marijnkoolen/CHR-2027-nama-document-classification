@@ -1,0 +1,13 @@
+true_mapped,Approval notice,D.1,D.2,DM.1,Judicial and political background check,NAMA agreement,Registration card,Report of selection and medical officers,Testimonial labour (Qualification & Employment Proof),Testimonial medical form (Medical & Health Documents),Testimonial medical letter (Medical & Health Documents),Other
+Approval notice,9,0,0,0,0,0,0,0,0,0,0,0
+D.1,0,42,0,0,0,0,0,0,0,0,0,0
+D.2,0,0,23,0,0,0,0,0,0,0,0,0
+DM.1,0,0,0,31,0,0,0,0,0,0,0,2
+Judicial and political background check,0,0,0,0,11,0,0,0,0,0,0,0
+NAMA agreement,0,0,0,1,0,18,0,0,0,0,0,0
+Registration card,0,0,0,0,0,0,11,0,0,0,0,0
+Report of selection and medical officers,1,0,0,0,0,0,0,17,0,0,0,0
+Testimonial labour (Qualification & Employment Proof),0,0,0,0,0,0,0,0,51,0,0,1
+Testimonial medical form (Medical & Health Documents),0,0,0,0,0,0,0,0,0,5,0,0
+Testimonial medical letter (Medical & Health Documents),0,0,0,0,0,0,0,0,0,0,22,0
+Other,1,0,2,0,0,0,0,0,3,0,0,87

@@ -1,0 +1,2 @@
+mean=trend
+dispersion_winner=iid_disp

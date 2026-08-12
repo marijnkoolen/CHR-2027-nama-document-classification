@@ -1,0 +1,22 @@
+{
+  "start_macro_precision": 0.9527210884353742,
+  "start_macro_recall": 0.9473949579831933,
+  "start_macro_f1": 0.9500021131820295,
+  "start_accuracy": 0.9585798816568047,
+  "start_roc_auc": null,
+  "doc_accuracy_e2e": 0.9327731092436975,
+  "doc_macro_f1_e2e": 0.70421762891043,
+  "doc_weighted_f1_e2e": 0.9465132401251805,
+  "pq": 0.9340983574067057,
+  "sq": 0.9961886958301726,
+  "rq": 0.9377570767218651,
+  "pq_tp": 224,
+  "pq_fp": 16,
+  "pq_fn": 14,
+  "pq_n_streams": 10,
+  "uas": 0.9408284023668639,
+  "las": 0.9112426035502958,
+  "n_pages_scored": 338,
+  "n_doctype_pages_scored": 338,
+  "n_true_start_pages": 238
+}

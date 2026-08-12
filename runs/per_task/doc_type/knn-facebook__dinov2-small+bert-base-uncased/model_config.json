@@ -1,0 +1,35 @@
+{
+  "model_family": "baseline",
+  "task": "doc_type",
+  "algorithm": "knn",
+  "features": [
+    "facebook/dinov2-small",
+    "bert-base-uncased"
+  ],
+  "num_classes": 23,
+  "class_names": [
+    "Approval notice",
+    "D.1",
+    "D.2",
+    "DM.1",
+    "Judicial and political background check",
+    "Letter about procedure",
+    "NAA cover",
+    "NAMA agreement",
+    "Other (Letter, Application Documents)",
+    "Other (Letter, Other)",
+    "Other (Other, Other)",
+    "Other (Structured Form, Administrative & Internal Processing Documents)",
+    "Other (Structured Form, Application Documents)",
+    "Other (Structured Form, Medical & Health Documents)",
+    "Other (Structured Form, Other)",
+    "Other (Structured Form, Qualification & Employment Proof)",
+    "Photo",
+    "Registration card",
+    "Report of selection and medical officers",
+    "Testimonial labour (Qualification & Employment Proof)",
+    "Testimonial medical form (Medical & Health Documents)",
+    "Testimonial medical letter (Medical & Health Documents)",
+    "Testimonial status (Application Documents)"
+  ]
+}

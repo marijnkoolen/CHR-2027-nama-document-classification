@@ -11,8 +11,19 @@ __pycache__/
 venv/
 env/
 
-# This repo ships no data - point DATA_ROOT/RUN_DIR at your own corpus,
-# which naturally lives outside this repo. If you keep it inside for
-# convenience, don't let it get tracked.
-/data/
-/runs/
+# This repo ships no *raw* data - point DATA_ROOT/RUN_DIR at your own
+# corpus for actually running the pipeline. It does ship a few specific,
+# deliberately-included, already-anonymised/aggregate files (evaluation
+# results, analysis plots/summaries, one anonymised labels TSV) - those are
+# un-ignored explicitly below. Everything else under data/ and runs/ stays
+# ignored, so a future `git add -A` here can't silently pick up something
+# that wasn't meant to ship (e.g. if you regenerate runs/ by actually
+# running the pipeline against real data).
+/data/*
+/runs/*
+!/data/labels/
+/data/labels/*
+!/data/labels/dossier_labels_merged_pdf12_stratified.tsv
+!/data/dossier_composition/
+!/data/dossier_size_model/
+!/runs/per_task/

@@ -1,7 +1,15 @@
 # NAMA document classification
 
-Page-level classification pipeline for scanned archival document
-collections: two tasks,
+Code and results from a project studying migration-dossier documents held
+by the National Archives of Australia (NAA): a page-classification
+pipeline, document-composition/dossier-size analyses, annotation tooling,
+and an OCR/transcription pipeline. The underlying scans, transcriptions,
+and raw personal data are not included anywhere in this repo - only code,
+plots/summary results, and one anonymised labels dataset (see "What's
+here" below). This is a clean-room extraction from a private working repo
+that does hold that restricted data.
+
+The classification pipeline itself covers two tasks:
 
 - **start_page** (binary): is this scan the first page of a document within
   a larger PDF/dossier?
@@ -13,21 +21,20 @@ features, an LSTM over a document's page sequence, early/late multimodal
 fusion, and end-to-end finetuning), across configurable vision and text
 backbones, chained into a two-stage pipeline: predict start_page over every
 page, then predict document_type only on the pages flagged as document
-heads.
-
-This is the code from the classification component of a larger project
-studying migration-dossier documents held by the National Archives of
-Australia; the annotated data itself is not included here (it's personal
-data, kept private) - point this pipeline at your own similarly-shaped
-corpus (see "Bringing your own data" below).
+heads. See `runs/per_task/eval_report.html` for this project's own results.
 
 ## Setup
 
 ```bash
+# classification pipeline
 pip install -r scripts/classification/requirements.txt
 pip install -r scripts/classification/sequential/requirements.txt
 # only if you need joint_legacy/'s standalone scripts directly:
 pip install -r scripts/classification/joint_legacy/requirements.txt
+
+# dossier_composition/ and dossier_size_model/ analyses (pymc/arviz/etc -
+# see "A gap in scripts/dossier_composition/requirements-gpu.txt" below)
+pip install -r scripts/dossier_composition/requirements-gpu.txt
 ```
 
 ## Bringing your own data
@@ -38,6 +45,10 @@ identifier, page number, `document_type`, `start_page` (yes/no),
 `scripts/classification/lib/labels.py`'s module docstring for the exact
 column names and how splits are assigned if you don't provide one. Point
 `DATA_ROOT` at the directory containing it.
+`data/labels/dossier_labels_merged_pdf12_stratified.tsv` (this project's
+own anonymised labels) is a real example of that shape, minus the actual
+`img_path`/`text_path` targets - those point at scans this repo doesn't
+ship.
 
 ## Pipeline stages
 
@@ -88,4 +99,65 @@ scripts/classification/
                 (precompute_embeddings.py, evaluate_segmentation.py,
                 flag_prediction_errors.py) are still genuine dependencies
                 of sequential/. No Makefile targets of its own.
+scripts/dossier_composition/, scripts/dossier_size_model/
+  Separate analyses (document co-occurrence/ordering/dispersion within a
+  dossier; Bayesian modelling of dossier size, doc-type counts, and their
+  temporal trends). Each has its own Makefile (`make help` inside either
+  directory). Outputs land in data/dossier_composition/,
+  data/dossier_size_model/ - see "What's not here" below for what's
+  excluded from those.
+scripts/labels/
+  Annotation label merging/splitting: merge_annotations.py combines raw
+  per-annotator exports, merge_rare_doctypes.py folds low-count document
+  types into "Other (...)" buckets, assign_stratified_splits.py builds the
+  train/val/test split. Produces data/labels/dossier_labels_merged_pdf12_
+  stratified.tsv (an anonymised version of which ships in this repo - see
+  below).
+scripts/ocr/
+  OCR/transcription tooling used ahead of the classification pipeline -
+  run_qwen_vl.py (Qwen2-VL-based transcription), run_got_ocr2.py
+  (GOT-OCR2 alternative), benchmark_vllm.py, form_registration.py,
+  visualize_detected_text.py.
+docs/model_equations.tex
+  The Bayesian model specifications behind dossier_size_model/'s analyses.
+runs/per_task/
+  Evaluation results: eval_report.html, model_tables.tex, and per-model/
+  per-pipeline-combination metrics.json/per_class_metrics/confusion
+  matrices - the classification pipeline's actual results on this
+  project's data, not a synthetic example run.
+data/labels/dossier_labels_merged_pdf12_stratified.tsv
+  The anonymised ground-truth labels (start_page/document_type per page)
+  this project's classification results were trained/evaluated on. Dossier
+  IDs have their name segment replaced with a synthetic sequential token
+  (a2478-d0000123-1234567) - the NAA numeric identifier is kept as-is,
+  since NAA's own finding aid already makes it publicly searchable outside
+  the EU/GDPR (see scripts/classification's originating private repo's
+  anonymise_dossier_ids.py for the full reasoning, not included here).
 ```
+
+### What's not here
+
+- **Trained model weights** (`model.pt`/`model.pkl`, ~6.8G across every
+  regime/backbone/task) and **raw per-page prediction arrays**
+  (`preds_test.npy`/`probs_test.npy`) under `runs/per_task/` - only the
+  human-readable results (metrics, per-class breakdowns, confusion matrix
+  images) are included.
+- **Bayesian inference traces** (`*.nc` files under `data/dossier_composition/`
+  and `data/dossier_size_model/`, ~2.3G total, some individual files over
+  250M) and two large intermediate `.npy` arrays in
+  `data/dossier_composition/` - only the plots/summary CSVs/reports derived
+  from them are included. Re-running the relevant Makefile target
+  regenerates them locally.
+- **Raw page images/text/PDFs** - never included anywhere in this project's
+  public code, at any point.
+
+### A gap in scripts/dossier_composition/requirements-gpu.txt
+
+`scripts/dossier_composition/order.py` imports `statsmodels`, which isn't
+in `requirements-gpu.txt` - that file's own header explains it's a
+carefully pinned closure (to avoid two specific version-conflict issues
+already hit once), so I didn't add an unpinned `statsmodels` to it myself.
+Also note: `scripts/dossier_size_model/` uses the same pymc/arviz/
+matplotlib/numpy/pandas/scipy stack as `dossier_composition/` but has no
+`requirements.txt` of its own - install `dossier_composition`'s
+`requirements-gpu.txt` before running either.

@@ -1,0 +1,14 @@
+{
+  "model_family": "sequence_lstm",
+  "task": "start_page",
+  "features_backbone": "efficientnet_b0",
+  "input_dim": 1280,
+  "hidden_dim": 256,
+  "num_layers": 2,
+  "dropout": 0.3,
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "model_family": "baseline",
+  "task": "start_page",
+  "algorithm": "xgboost",
+  "features": [
+    "vgg16"
+  ],
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

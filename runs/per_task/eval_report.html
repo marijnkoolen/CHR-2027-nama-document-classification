@@ -1,0 +1,371 @@
+<meta charset="utf-8">
+<title>Sequential Pipeline — Evaluation Report</title>
+<style>
+  :root {
+    --paper: #F1F2EF;
+    --paper-raised: #FFFFFF;
+    --ink: #1D2430;
+    --ink-soft: #565D68;
+    --indigo: #34517D;
+    --indigo-soft: #7E92B0;
+    --indigo-wash: #E4E9F0;
+    --brass: #A97A2E;
+    --brass-wash: #F3E7D3;
+    --line: #D7D9D2;
+    --baseline-c: #4C7A73;
+    --sequence-c: #7A5C82;
+    --fusion-c: #8A7A3E;
+    --finetune-c: #6A6F94;
+    --shadow: 0 1px 2px rgba(29,36,48,0.06), 0 4px 16px rgba(29,36,48,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #14181F;
+      --paper-raised: #1B212B;
+      --ink: #E7E8E3;
+      --ink-soft: #9DA3AC;
+      --indigo: #8AA3CC;
+      --indigo-soft: #4A5C7D;
+      --indigo-wash: #212E42;
+      --brass: #D9A24D;
+      --brass-wash: #362A18;
+      --line: #2A2F3A;
+      --baseline-c: #6FA69C;
+      --sequence-c: #A084AA;
+      --fusion-c: #C1A25E;
+      --finetune-c: #9398BE;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14181F; --paper-raised: #1B212B; --ink: #E7E8E3; --ink-soft: #9DA3AC;
+    --indigo: #8AA3CC; --indigo-soft: #4A5C7D; --indigo-wash: #212E42;
+    --brass: #D9A24D; --brass-wash: #362A18; --line: #2A2F3A;
+    --baseline-c: #6FA69C; --sequence-c: #A084AA; --fusion-c: #C1A25E; --finetune-c: #9398BE;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #F1F2EF; --paper-raised: #FFFFFF; --ink: #1D2430; --ink-soft: #565D68;
+    --indigo: #34517D; --indigo-soft: #7E92B0; --indigo-wash: #E4E9F0;
+    --brass: #A97A2E; --brass-wash: #F3E7D3; --line: #D7D9D2;
+    --baseline-c: #4C7A73; --sequence-c: #7A5C82; --fusion-c: #8A7A3E; --finetune-c: #6A6F94;
+    --shadow: 0 1px 2px rgba(29,36,48,0.06), 0 4px 16px rgba(29,36,48,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+
+  h1, h2, h3 {
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+    font-weight: 600;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", monospace; font-variant-numeric: tabular-nums; }
+
+  /* ---------- header ---------- */
+  header { margin-bottom: 2.75rem; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--indigo); font-weight: 600; margin-bottom: 0.6rem;
+  }
+  h1 { font-size: 2.1rem; color: var(--ink); margin-bottom: 0.5rem; }
+  .subtitle { color: var(--ink-soft); font-size: 1rem; max-width: 62ch; margin-bottom: 1.5rem; }
+  .stat-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .stat-chip {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px;
+    padding: 0.65rem 1rem; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 0.15rem; min-width: 8.5rem;
+  }
+  .stat-chip .num { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-chip .label { font-size: 0.72rem; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* ---------- section shell ---------- */
+  section { margin-bottom: 3rem; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .section-head h2 { font-size: 1.35rem; }
+  .section-note { color: var(--ink-soft); font-size: 0.88rem; }
+
+  /* ---------- leaderboard grid ---------- */
+  .board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 860px) { .board-grid { grid-template-columns: 1fr; } }
+
+  .board {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 12px;
+    padding: 1.25rem 1.25rem 0.75rem; box-shadow: var(--shadow);
+  }
+  .board-title { font-size: 1.05rem; margin-bottom: 0.2rem; }
+  .board-sub { font-size: 0.8rem; color: var(--ink-soft); margin-bottom: 0.9rem; }
+
+  .tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
+  .tab {
+    font-size: 0.74rem; font-weight: 600; letter-spacing: 0.02em;
+    padding: 0.3rem 0.65rem; border-radius: 999px; border: 1px solid var(--line);
+    background: transparent; color: var(--ink-soft); cursor: pointer;
+    font-family: inherit;
+  }
+  .tab[aria-pressed="true"] { background: var(--indigo); border-color: var(--indigo); color: var(--paper-raised); }
+  .tab:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 1.6rem minmax(0,1fr) 5.2rem 3.6rem;
+    align-items: center; gap: 0.6rem;
+    padding: 0.44rem 0; border-top: 1px solid var(--line);
+  }
+  .row:first-of-type { border-top: none; }
+  .row.hidden { display: none; }
+  .rank { font-size: 0.76rem; color: var(--ink-soft); font-family: ui-monospace, monospace; }
+  .row.top .rank { color: var(--brass); font-weight: 700; }
+
+  .model-cell { min-width: 0; }
+  .model-name { font-size: 0.86rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .model-meta { display: flex; gap: 0.35rem; align-items: center; margin-top: 0.18rem; flex-wrap: wrap; }
+  .pill {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    padding: 0.08rem 0.4rem; border-radius: 4px; color: var(--paper-raised);
+    white-space: nowrap;
+  }
+  .backbone-tag { font-size: 0.72rem; color: var(--ink-soft); white-space: nowrap; }
+
+  .bar-cell { position: relative; height: 0.55rem; border-radius: 3px; background: var(--indigo-wash); overflow: hidden; }
+  .bar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--indigo); }
+  .row.top .bar-fill { background: var(--brass); }
+
+  .score { font-size: 0.82rem; font-weight: 600; text-align: right; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  /* ---------- pipeline table ---------- */
+  .pipeline-wrap { overflow-x: auto; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  table.pipeline { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 0.85rem; }
+  table.pipeline th, table.pipeline td { padding: 0.6rem 0.85rem; text-align: left; border-top: 1px solid var(--line); white-space: nowrap; }
+  table.pipeline thead th {
+    border-top: none; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--ink-soft); font-weight: 600; padding-bottom: 0.5rem; line-height: 1.5;
+  }
+  .th-sub { font-size: 0.62rem; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--indigo-soft); }
+  table.pipeline td.num { font-family: ui-monospace, monospace; text-align: right; font-variant-numeric: tabular-nums; }
+  .sub-metric { display: block; font-size: 0.72rem; color: var(--ink-soft); font-weight: 400; margin-top: 0.1rem; }
+  table.pipeline tbody tr.winner { background: var(--brass-wash); }
+  table.pipeline tbody tr.winner td:first-child { position: relative; }
+  .win-badge {
+    display: inline-block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    color: var(--brass); border: 1px solid var(--brass); border-radius: 4px; padding: 0.04rem 0.35rem; margin-left: 0.5rem;
+  }
+  .pair-model { font-weight: 600; }
+  .pair-arrow { color: var(--ink-soft); margin: 0 0.35rem; }
+
+  /* ---------- notes ---------- */
+  .notes {
+    border-top: 1px solid var(--line); padding-top: 1.5rem; color: var(--ink-soft); font-size: 0.85rem;
+  }
+  .notes h3 { font-size: 0.95rem; color: var(--ink); margin-bottom: 0.6rem; }
+  .notes ul { margin: 0; padding-left: 1.2rem; }
+  .notes li { margin-bottom: 0.45rem; }
+  .notes code { font-family: ui-monospace, monospace; font-size: 0.82em; background: var(--indigo-wash); padding: 0.05rem 0.3rem; border-radius: 3px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Migration Dossiers · Sequential Classification Pipeline</div>
+    <h1>Model Evaluation Report</h1>
+    <p class="subtitle">Every trained checkpoint — baseline, sequence, fusion and finetune regimes, six backbones, two tasks — scored on the held-out test split, plus the best start_page → document_type pipeline combinations.</p>
+    <div class="stat-row">
+      <div class="stat-chip"><span class="num mono" id="stat-start-n">–</span><span class="label">start_page models</span></div>
+      <div class="stat-chip"><span class="num mono" id="stat-doc-n">–</span><span class="label">doc_type models</span></div>
+      <div class="stat-chip"><span class="num mono">338</span><span class="label">test pages</span></div>
+      <div class="stat-chip"><span class="num mono">1,717 / 367</span><span class="label">train / val pages</span></div>
+    </div>
+  </header>
+
+  <section>
+    <div class="section-head">
+      <h2>Per-task leaderboards</h2>
+      <div class="section-note">Ranked by macro F1 · filter by training regime</div>
+    </div>
+    <div class="board-grid">
+      <div class="board">
+        <div class="board-title">start_page</div>
+        <div class="board-sub">binary — is this page the first page of a document?</div>
+        <div class="tabs" data-board="start_page"></div>
+        <div class="rows" id="rows-start_page"></div>
+      </div>
+      <div class="board">
+        <div class="board-title">doc_type</div>
+        <div class="board-sub">multi-class — document type, start pages only</div>
+        <div class="tabs" data-board="doc_type"></div>
+        <div class="rows" id="rows-doc_type"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Best pipeline combinations</h2>
+      <div class="section-note">Top 3 start_page × 5 doc_type models (3 standalone leaders + 2 late-fusion candidates competitive enough standalone to be worth checking end-to-end), chained and scored end-to-end · ranked by LAS</div>
+    </div>
+    <div class="pipeline-wrap">
+      <table class="pipeline">
+        <thead>
+          <tr>
+            <th>Pipeline (start_page → doc_type)</th>
+            <th>start F1<br><span class="th-sub">macro, both classes</span></th>
+            <th>doc macro F1<br><span class="th-sub">every true start page</span></th>
+            <th>PQ</th>
+            <th>UAS</th>
+            <th>LAS</th>
+          </tr>
+        </thead>
+        <tbody id="pipeline-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="notes">
+    <h3>Methodology &amp; notes</h3>
+    <ul>
+      <li>Every score on this page is <strong>macro-averaged and end-to-end</strong> — <strong>start F1</strong> is the mean of both classes' F1 (start + not-start), matching the standalone start_page leaderboard's own macro F1; <strong>doc macro F1</strong> is scored over every true start page in the test set, matching the standalone doc_type leaderboard's own denominator — a page whose start wasn't detected counts as wrong, not as excluded. Positive-class-only F1 (start_page's binary "start"-class-only score) and document_type accuracy/F1 conditioned on the start_page model having actually detected the page are deliberately not reported anywhere in this report: both silently score an easier, differently-scoped question than the real inference task, and have been mistaken downstream for the honest number — including for document-type count corrections across the full corpus, which is not a valid use of either.</li>
+      <li><strong>PQ</strong> (panoptic quality), <strong>UAS</strong> (unlabeled attachment score) and <strong>LAS</strong> (labeled attachment score) treat each dossier as a sequence of document segments: PQ scores how well predicted segment boundaries match ground truth, UAS whether pages are grouped into the right segments regardless of label, LAS whether they're grouped <em>and</em> correctly typed.</li>
+      <li>All models were trained and evaluated on <code>--device cpu</code> throughout — MPS was avoided for its known correctness issues (silent NaNs, collapsed training) in the PyTorch versions this project uses.</li>
+      <li>The four vision finetune checkpoints (<code>vgg16-ft</code>, <code>efficientnet-ft</code>, <code>facebook__dinov2-small-ft</code>, <code>microsoft__dit-large-finetuned-rvlcdip-ft</code>) needed a separate evaluation pass, run from a terminal with full filesystem access — the automated evaluation environment used for everything else hit an OS-level permission restriction reading raw page images directly (cache-based models were unaffected).</li>
+      <li>None of the top-3 models per task use the finetune-image regime, so the pipeline combinations above aren't affected by that gap.</li>
+      <li><strong>Late fusion</strong> (averaging two independently fine-tuned models' softmax outputs, no training or architecture of its own) scores competitively on the standalone doc_type leaderboard — <code>late-fusion-efficientnet_b0+bert-base-uncased</code> comes within 0.0004 macro F1 of the standalone leader — and, once given genuine re-inference support (reloading its two constituent finetune checkpoints and running them on whatever page subset a pipeline run needs, rather than reusing their original test-set predictions), it turns out to <strong>win outright</strong>: <code>knn-dinov2+mpnet → late-fusion-efficientnet_b0+bert-base-uncased</code> is the best pipeline combination overall (LAS 0.9527), ahead of the previous best (LAS 0.9497) paired with the standalone-leaderboard's #4 model, <code>bert-ft-bert-base-uncased</code>. The same start_page-noise effect that let a modest standalone doc_type model win the original pipeline sweep applies here too.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+const DATA = {"start_page": [{"model": "knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["DINOv2-S", "mpnet-multilingual"], "accuracy": 0.9615, "macro_f1": 0.9534, "weighted_f1": 0.9614}, {"model": "lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "sequence", "algo": "LSTM", "backbones": ["mpnet-multilingual"], "accuracy": 0.9586, "macro_f1": 0.95, "weighted_f1": 0.9585}, {"model": "lstm-facebook__dinov2-small", "regime": "sequence", "algo": "LSTM", "backbones": ["DINOv2-S"], "accuracy": 0.9586, "macro_f1": 0.95, "weighted_f1": 0.9585}, {"model": "knn-efficientnet_b0+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["EfficientNet-B0", "mpnet-multilingual"], "accuracy": 0.9586, "macro_f1": 0.9494, "weighted_f1": 0.9582}, {"model": "lstm-vgg16", "regime": "sequence", "algo": "LSTM", "backbones": ["VGG16"], "accuracy": 0.9527, "macro_f1": 0.945, "weighted_f1": 0.9534}, {"model": "lstm-efficientnet_b0", "regime": "sequence", "algo": "LSTM", "backbones": ["EfficientNet-B0"], "accuracy": 0.9497, "macro_f1": 0.9395, "weighted_f1": 0.9496}, {"model": "late-fusion-facebook__dinov2-small+bert-base-uncased", "regime": "fusion", "algo": "Late fusion", "backbones": ["DINOv2-S", "BERT-base"], "accuracy": 0.9497, "macro_f1": 0.9384, "weighted_f1": 0.9492}, {"model": "late-fusion-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Late fusion", "backbones": ["DINOv2-S", "mpnet-multilingual"], "accuracy": 0.9497, "macro_f1": 0.9384, "weighted_f1": 0.9492}, {"model": "knn-facebook__dinov2-small", "regime": "baseline", "algo": "KNN", "backbones": ["DINOv2-S"], "accuracy": 0.9467, "macro_f1": 0.9361, "weighted_f1": 0.9467}, {"model": "knn-efficientnet_b0", "regime": "baseline", "algo": "KNN", "backbones": ["EfficientNet-B0"], "accuracy": 0.9467, "macro_f1": 0.9349, "weighted_f1": 0.9463}, {"model": "knn-facebook__dinov2-small+bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["DINOv2-S", "BERT-base"], "accuracy": 0.9467, "macro_f1": 0.9349, "weighted_f1": 0.9463}, {"model": "knn-efficientnet_b0+bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["EfficientNet-B0", "BERT-base"], "accuracy": 0.9467, "macro_f1": 0.9345, "weighted_f1": 0.9461}, {"model": "facebook__dinov2-small-ft", "regime": "finetune", "algo": "Fine-tune", "backbones": ["DINOv2-S"], "accuracy": 0.9438, "macro_f1": 0.9315, "weighted_f1": 0.9434}, {"model": "early-fusion-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Early fusion", "backbones": ["DINOv2-S", "mpnet-multilingual"], "accuracy": 0.9408, "macro_f1": 0.9277, "weighted_f1": 0.9403}, {"model": "early-fusion-efficientnet_b0+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Early fusion", "backbones": ["EfficientNet-B0", "mpnet-multilingual"], "accuracy": 0.9379, "macro_f1": 0.9243, "weighted_f1": 0.9374}, {"model": "early-fusion-facebook__dinov2-small+bert-base-uncased", "regime": "fusion", "algo": "Early fusion", "backbones": ["DINOv2-S", "BERT-base"], "accuracy": 0.9349, "macro_f1": 0.921, "weighted_f1": 0.9345}, {"model": "late-fusion-vgg16+bert-base-uncased", "regime": "fusion", "algo": "Late fusion", "backbones": ["VGG16", "BERT-base"], "accuracy": 0.9349, "macro_f1": 0.9189, "weighted_f1": 0.9336}, {"model": "late-fusion-vgg16+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Late fusion", "backbones": ["VGG16", "mpnet-multilingual"], "accuracy": 0.932, "macro_f1": 0.9155, "weighted_f1": 0.9307}, {"model": "xgboost-facebook__dinov2-small", "regime": "baseline", "algo": "XGBoost", "backbones": ["DINOv2-S"], "accuracy": 0.929, "macro_f1": 0.9143, "weighted_f1": 0.9288}, {"model": "efficientnet-ft", "regime": "finetune", "algo": "Fine-tune", "backbones": ["EfficientNet-B0"], "accuracy": 0.926, "macro_f1": 0.913, "weighted_f1": 0.9267}, {"model": "late-fusion-efficientnet_b0+bert-base-uncased", "regime": "fusion", "algo": "Late fusion", "backbones": ["EfficientNet-B0", "BERT-base"], "accuracy": 0.929, "macro_f1": 0.9116, "weighted_f1": 0.9276}, {"model": "late-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "regime": "fusion", "algo": "Late fusion", "backbones": ["DiT-Large", "BERT-base"], "accuracy": 0.929, "macro_f1": 0.9116, "weighted_f1": 0.9276}, {"model": "bert-ft-bert-base-uncased", "regime": "finetune", "algo": "BERT fine-tune", "backbones": ["BERT-base"], "accuracy": 0.929, "macro_f1": 0.9116, "weighted_f1": 0.9276}, {"model": "vgg16-ft", "regime": "finetune", "algo": "Fine-tune", "backbones": ["VGG16"], "accuracy": 0.926, "macro_f1": 0.9099, "weighted_f1": 0.9255}, {"model": "early-fusion-efficientnet_b0+bert-base-uncased", "regime": "fusion", "algo": "Early fusion", "backbones": ["EfficientNet-B0", "BERT-base"], "accuracy": 0.926, "macro_f1": 0.9099, "weighted_f1": 0.9255}, {"model": "late-fusion-efficientnet_b0+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Late fusion", "backbones": ["EfficientNet-B0", "mpnet-multilingual"], "accuracy": 0.926, "macro_f1": 0.9082, "weighted_f1": 0.9247}, {"model": "knn-bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["BERT-base"], "accuracy": 0.926, "macro_f1": 0.9076, "weighted_f1": 0.9244}, {"model": "early-fusion-vgg16+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Early fusion", "backbones": ["VGG16", "mpnet-multilingual"], "accuracy": 0.9231, "macro_f1": 0.9066, "weighted_f1": 0.9226}, {"model": "knn-vgg16+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["VGG16", "mpnet-multilingual"], "accuracy": 0.9231, "macro_f1": 0.9029, "weighted_f1": 0.921}, {"model": "early-fusion-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Early fusion", "backbones": ["DiT-Large", "mpnet-multilingual"], "accuracy": 0.9172, "macro_f1": 0.9028, "weighted_f1": 0.918}, {"model": "xgboost-facebook__dinov2-small+bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["DINOv2-S", "BERT-base"], "accuracy": 0.9201, "macro_f1": 0.9009, "weighted_f1": 0.9187}, {"model": "xgboost-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["DiT-Large", "mpnet-multilingual"], "accuracy": 0.9201, "macro_f1": 0.9002, "weighted_f1": 0.9184}, {"model": "knn-vgg16+bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["VGG16", "BERT-base"], "accuracy": 0.9201, "macro_f1": 0.9002, "weighted_f1": 0.9184}, {"model": "knn-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["DiT-Large", "mpnet-multilingual"], "accuracy": 0.9172, "macro_f1": 0.8994, "weighted_f1": 0.9167}, {"model": "early-fusion-vgg16+bert-base-uncased", "regime": "fusion", "algo": "Early fusion", "backbones": ["VGG16", "BERT-base"], "accuracy": 0.9172, "macro_f1": 0.8982, "weighted_f1": 0.9161}, {"model": "xgboost-efficientnet_b0+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["EfficientNet-B0", "mpnet-multilingual"], "accuracy": 0.9172, "macro_f1": 0.8982, "weighted_f1": 0.9161}, {"model": "xgboost-efficientnet_b0+bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["EfficientNet-B0", "BERT-base"], "accuracy": 0.9172, "macro_f1": 0.8982, "weighted_f1": 0.9161}, {"model": "xgboost-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["DINOv2-S", "mpnet-multilingual"], "accuracy": 0.9172, "macro_f1": 0.8975, "weighted_f1": 0.9158}, {"model": "bert-ft-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "finetune", "algo": "BERT fine-tune", "backbones": ["mpnet-multilingual"], "accuracy": 0.9172, "macro_f1": 0.8975, "weighted_f1": 0.9158}, {"model": "lstm-bert-base-uncased", "regime": "sequence", "algo": "LSTM", "backbones": ["BERT-base"], "accuracy": 0.9142, "macro_f1": 0.8942, "weighted_f1": 0.913}, {"model": "late-fusion-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Late fusion", "backbones": ["DiT-Large", "mpnet-multilingual"], "accuracy": 0.9142, "macro_f1": 0.8935, "weighted_f1": 0.9127}, {"model": "lstm-microsoft__dit-large-finetuned-rvlcdip", "regime": "sequence", "algo": "LSTM", "backbones": ["DiT-Large"], "accuracy": 0.9083, "macro_f1": 0.8921, "weighted_f1": 0.9092}, {"model": "early-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "regime": "fusion", "algo": "Early fusion", "backbones": ["DiT-Large", "BERT-base"], "accuracy": 0.9083, "macro_f1": 0.8903, "weighted_f1": 0.9084}, {"model": "knn-vgg16", "regime": "baseline", "algo": "KNN", "backbones": ["VGG16"], "accuracy": 0.9112, "macro_f1": 0.8895, "weighted_f1": 0.9095}, {"model": "xgboost-vgg16+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["VGG16", "mpnet-multilingual"], "accuracy": 0.9112, "macro_f1": 0.8895, "weighted_f1": 0.9095}, {"model": "xgboost-efficientnet_b0", "regime": "baseline", "algo": "XGBoost", "backbones": ["EfficientNet-B0"], "accuracy": 0.9083, "macro_f1": 0.8883, "weighted_f1": 0.9076}, {"model": "xgboost-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["mpnet-multilingual"], "accuracy": 0.9024, "macro_f1": 0.878, "weighted_f1": 0.9003}, {"model": "xgboost-vgg16+bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["VGG16", "BERT-base"], "accuracy": 0.9024, "macro_f1": 0.878, "weighted_f1": 0.9003}, {"model": "knn-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["mpnet-multilingual"], "accuracy": 0.9024, "macro_f1": 0.8764, "weighted_f1": 0.8995}, {"model": "xgboost-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["DiT-Large", "BERT-base"], "accuracy": 0.8964, "macro_f1": 0.8723, "weighted_f1": 0.895}, {"model": "knn-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["DiT-Large", "BERT-base"], "accuracy": 0.8964, "macro_f1": 0.8706, "weighted_f1": 0.8942}, {"model": "xgboost-microsoft__dit-large-finetuned-rvlcdip", "regime": "baseline", "algo": "XGBoost", "backbones": ["DiT-Large"], "accuracy": 0.8905, "macro_f1": 0.8698, "weighted_f1": 0.891}, {"model": "xgboost-vgg16", "regime": "baseline", "algo": "XGBoost", "backbones": ["VGG16"], "accuracy": 0.8905, "macro_f1": 0.865, "weighted_f1": 0.889}, {"model": "xgboost-bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["BERT-base"], "accuracy": 0.8846, "macro_f1": 0.8549, "weighted_f1": 0.8817}, {"model": "knn-microsoft__dit-large-finetuned-rvlcdip", "regime": "baseline", "algo": "KNN", "backbones": ["DiT-Large"], "accuracy": 0.8343, "macro_f1": 0.7865, "weighted_f1": 0.8277}, {"model": "microsoft__dit-large-finetuned-rvlcdip-ft", "regime": "finetune", "algo": "Fine-tune", "backbones": ["DiT-Large"], "accuracy": 0.7337, "macro_f1": 0.6767, "weighted_f1": 0.7321}], "doc_type": [{"model": "early-fusion-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Early fusion", "backbones": ["DiT-Large", "mpnet-multilingual"], "accuracy": 0.8436, "macro_f1": 0.7302, "weighted_f1": 0.8257}, {"model": "late-fusion-efficientnet_b0+bert-base-uncased", "regime": "fusion", "algo": "Late fusion", "backbones": ["EfficientNet-B0", "BERT-base"], "accuracy": 0.8664, "macro_f1": 0.7298, "weighted_f1": 0.841}, {"model": "late-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "regime": "fusion", "algo": "Late fusion", "backbones": ["DiT-Large", "BERT-base"], "accuracy": 0.8599, "macro_f1": 0.715, "weighted_f1": 0.8356}, {"model": "bert-ft-bert-base-uncased", "regime": "finetune", "algo": "BERT fine-tune", "backbones": ["BERT-base"], "accuracy": 0.8599, "macro_f1": 0.7141, "weighted_f1": 0.836}, {"model": "early-fusion-efficientnet_b0+bert-base-uncased", "regime": "fusion", "algo": "Early fusion", "backbones": ["EfficientNet-B0", "BERT-base"], "accuracy": 0.8078, "macro_f1": 0.7042, "weighted_f1": 0.7882}, {"model": "early-fusion-vgg16+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Early fusion", "backbones": ["VGG16", "mpnet-multilingual"], "accuracy": 0.8502, "macro_f1": 0.6825, "weighted_f1": 0.8283}, {"model": "late-fusion-vgg16+bert-base-uncased", "regime": "fusion", "algo": "Late fusion", "backbones": ["VGG16", "BERT-base"], "accuracy": 0.8599, "macro_f1": 0.6779, "weighted_f1": 0.8334}, {"model": "late-fusion-facebook__dinov2-small+bert-base-uncased", "regime": "fusion", "algo": "Late fusion", "backbones": ["DINOv2-S", "BERT-base"], "accuracy": 0.8567, "macro_f1": 0.6726, "weighted_f1": 0.8283}, {"model": "early-fusion-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Early fusion", "backbones": ["DINOv2-S", "mpnet-multilingual"], "accuracy": 0.8176, "macro_f1": 0.6654, "weighted_f1": 0.7975}, {"model": "bert-ft-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "finetune", "algo": "BERT fine-tune", "backbones": ["mpnet-multilingual"], "accuracy": 0.8469, "macro_f1": 0.6618, "weighted_f1": 0.8217}, {"model": "early-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "regime": "fusion", "algo": "Early fusion", "backbones": ["DiT-Large", "BERT-base"], "accuracy": 0.7883, "macro_f1": 0.6612, "weighted_f1": 0.7702}, {"model": "early-fusion-efficientnet_b0+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Early fusion", "backbones": ["EfficientNet-B0", "mpnet-multilingual"], "accuracy": 0.8111, "macro_f1": 0.6548, "weighted_f1": 0.7931}, {"model": "late-fusion-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Late fusion", "backbones": ["DiT-Large", "mpnet-multilingual"], "accuracy": 0.8404, "macro_f1": 0.6542, "weighted_f1": 0.8141}, {"model": "xgboost-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["DINOv2-S", "mpnet-multilingual"], "accuracy": 0.8208, "macro_f1": 0.6523, "weighted_f1": 0.7896}, {"model": "xgboost-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["mpnet-multilingual"], "accuracy": 0.8208, "macro_f1": 0.6497, "weighted_f1": 0.7884}, {"model": "xgboost-efficientnet_b0+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["EfficientNet-B0", "mpnet-multilingual"], "accuracy": 0.8143, "macro_f1": 0.6467, "weighted_f1": 0.7794}, {"model": "early-fusion-vgg16+bert-base-uncased", "regime": "fusion", "algo": "Early fusion", "backbones": ["VGG16", "BERT-base"], "accuracy": 0.8176, "macro_f1": 0.6418, "weighted_f1": 0.804}, {"model": "late-fusion-efficientnet_b0+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Late fusion", "backbones": ["EfficientNet-B0", "mpnet-multilingual"], "accuracy": 0.8371, "macro_f1": 0.6369, "weighted_f1": 0.8099}, {"model": "xgboost-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["DiT-Large", "BERT-base"], "accuracy": 0.8208, "macro_f1": 0.6356, "weighted_f1": 0.7829}, {"model": "xgboost-efficientnet_b0+bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["EfficientNet-B0", "BERT-base"], "accuracy": 0.8208, "macro_f1": 0.6347, "weighted_f1": 0.7831}, {"model": "late-fusion-vgg16+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Late fusion", "backbones": ["VGG16", "mpnet-multilingual"], "accuracy": 0.8176, "macro_f1": 0.6335, "weighted_f1": 0.7865}, {"model": "xgboost-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["DiT-Large", "mpnet-multilingual"], "accuracy": 0.8111, "macro_f1": 0.6275, "weighted_f1": 0.7701}, {"model": "xgboost-vgg16+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "XGBoost", "backbones": ["VGG16", "mpnet-multilingual"], "accuracy": 0.8078, "macro_f1": 0.6271, "weighted_f1": 0.7706}, {"model": "early-fusion-facebook__dinov2-small+bert-base-uncased", "regime": "fusion", "algo": "Early fusion", "backbones": ["DINOv2-S", "BERT-base"], "accuracy": 0.7134, "macro_f1": 0.6222, "weighted_f1": 0.708}, {"model": "xgboost-facebook__dinov2-small+bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["DINOv2-S", "BERT-base"], "accuracy": 0.8208, "macro_f1": 0.6157, "weighted_f1": 0.7852}, {"model": "xgboost-vgg16+bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["VGG16", "BERT-base"], "accuracy": 0.8208, "macro_f1": 0.6129, "weighted_f1": 0.7837}, {"model": "xgboost-bert-base-uncased", "regime": "baseline", "algo": "XGBoost", "backbones": ["BERT-base"], "accuracy": 0.8143, "macro_f1": 0.6121, "weighted_f1": 0.7819}, {"model": "knn-bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["BERT-base"], "accuracy": 0.785, "macro_f1": 0.6031, "weighted_f1": 0.7462}, {"model": "knn-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["mpnet-multilingual"], "accuracy": 0.8143, "macro_f1": 0.5991, "weighted_f1": 0.7718}, {"model": "late-fusion-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "fusion", "algo": "Late fusion", "backbones": ["DINOv2-S", "mpnet-multilingual"], "accuracy": 0.7915, "macro_f1": 0.5982, "weighted_f1": 0.7586}, {"model": "knn-efficientnet_b0+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["EfficientNet-B0", "mpnet-multilingual"], "accuracy": 0.7785, "macro_f1": 0.5956, "weighted_f1": 0.7347}, {"model": "knn-vgg16+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["VGG16", "mpnet-multilingual"], "accuracy": 0.7883, "macro_f1": 0.5932, "weighted_f1": 0.743}, {"model": "knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["DINOv2-S", "mpnet-multilingual"], "accuracy": 0.7752, "macro_f1": 0.5863, "weighted_f1": 0.731}, {"model": "facebook__dinov2-small-ft", "regime": "finetune", "algo": "Fine-tune", "backbones": ["DINOv2-S"], "accuracy": 0.7068, "macro_f1": 0.5531, "weighted_f1": 0.6812}, {"model": "vgg16-ft", "regime": "finetune", "algo": "Fine-tune", "backbones": ["VGG16"], "accuracy": 0.6547, "macro_f1": 0.5525, "weighted_f1": 0.6387}, {"model": "lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "sequence", "algo": "LSTM", "backbones": ["mpnet-multilingual"], "accuracy": 0.7524, "macro_f1": 0.545, "weighted_f1": 0.7199}, {"model": "efficientnet-ft", "regime": "finetune", "algo": "Fine-tune", "backbones": ["EfficientNet-B0"], "accuracy": 0.658, "macro_f1": 0.5319, "weighted_f1": 0.6431}, {"model": "knn-vgg16+bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["VGG16", "BERT-base"], "accuracy": 0.7101, "macro_f1": 0.5291, "weighted_f1": 0.657}, {"model": "knn-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "regime": "baseline", "algo": "KNN", "backbones": ["DiT-Large", "mpnet-multilingual"], "accuracy": 0.7296, "macro_f1": 0.5267, "weighted_f1": 0.6813}, {"model": "knn-efficientnet_b0+bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["EfficientNet-B0", "BERT-base"], "accuracy": 0.6775, "macro_f1": 0.5238, "weighted_f1": 0.6262}, {"model": "lstm-facebook__dinov2-small", "regime": "sequence", "algo": "LSTM", "backbones": ["DINOv2-S"], "accuracy": 0.6971, "macro_f1": 0.5139, "weighted_f1": 0.6713}, {"model": "lstm-efficientnet_b0", "regime": "sequence", "algo": "LSTM", "backbones": ["EfficientNet-B0"], "accuracy": 0.6417, "macro_f1": 0.4913, "weighted_f1": 0.6215}, {"model": "xgboost-microsoft__dit-large-finetuned-rvlcdip", "regime": "baseline", "algo": "XGBoost", "backbones": ["DiT-Large"], "accuracy": 0.6547, "macro_f1": 0.4898, "weighted_f1": 0.6008}, {"model": "xgboost-facebook__dinov2-small", "regime": "baseline", "algo": "XGBoost", "backbones": ["DINOv2-S"], "accuracy": 0.6352, "macro_f1": 0.4825, "weighted_f1": 0.5922}, {"model": "knn-vgg16", "regime": "baseline", "algo": "KNN", "backbones": ["VGG16"], "accuracy": 0.6124, "macro_f1": 0.4817, "weighted_f1": 0.5629}, {"model": "lstm-bert-base-uncased", "regime": "sequence", "algo": "LSTM", "backbones": ["BERT-base"], "accuracy": 0.7003, "macro_f1": 0.4816, "weighted_f1": 0.6784}, {"model": "knn-facebook__dinov2-small+bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["DINOv2-S", "BERT-base"], "accuracy": 0.6645, "macro_f1": 0.4775, "weighted_f1": 0.6143}, {"model": "xgboost-efficientnet_b0", "regime": "baseline", "algo": "XGBoost", "backbones": ["EfficientNet-B0"], "accuracy": 0.6352, "macro_f1": 0.4724, "weighted_f1": 0.5845}, {"model": "knn-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "regime": "baseline", "algo": "KNN", "backbones": ["DiT-Large", "BERT-base"], "accuracy": 0.6287, "macro_f1": 0.4679, "weighted_f1": 0.581}, {"model": "knn-efficientnet_b0", "regime": "baseline", "algo": "KNN", "backbones": ["EfficientNet-B0"], "accuracy": 0.6156, "macro_f1": 0.4658, "weighted_f1": 0.5546}, {"model": "xgboost-vgg16", "regime": "baseline", "algo": "XGBoost", "backbones": ["VGG16"], "accuracy": 0.6156, "macro_f1": 0.453, "weighted_f1": 0.5619}, {"model": "lstm-microsoft__dit-large-finetuned-rvlcdip", "regime": "sequence", "algo": "LSTM", "backbones": ["DiT-Large"], "accuracy": 0.5342, "macro_f1": 0.4124, "weighted_f1": 0.5131}, {"model": "knn-facebook__dinov2-small", "regime": "baseline", "algo": "KNN", "backbones": ["DINOv2-S"], "accuracy": 0.57, "macro_f1": 0.4116, "weighted_f1": 0.5145}, {"model": "lstm-vgg16", "regime": "sequence", "algo": "LSTM", "backbones": ["VGG16"], "accuracy": 0.57, "macro_f1": 0.3924, "weighted_f1": 0.5144}, {"model": "knn-microsoft__dit-large-finetuned-rvlcdip", "regime": "baseline", "algo": "KNN", "backbones": ["DiT-Large"], "accuracy": 0.4984, "macro_f1": 0.341, "weighted_f1": 0.4489}, {"model": "microsoft__dit-large-finetuned-rvlcdip-ft", "regime": "finetune", "algo": "Fine-tune", "backbones": ["DiT-Large"], "accuracy": 0.316, "macro_f1": 0.2305, "weighted_f1": 0.2734}], "pipeline": [{"start_model": "knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "late-fusion-efficientnet_b0+bert-base-uncased", "start_macro_f1": 0.9534, "doc_macro_f1_e2e": 0.7963, "pq": 0.9466, "uas": 0.9586, "las": 0.9527}, {"start_model": "knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "bert-ft-bert-base-uncased", "start_macro_f1": 0.9534, "doc_macro_f1_e2e": 0.7853, "pq": 0.9466, "uas": 0.9586, "las": 0.9497}, {"start_model": "knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "late-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "start_macro_f1": 0.9534, "doc_macro_f1_e2e": 0.7853, "pq": 0.9466, "uas": 0.9586, "las": 0.9497}, {"start_model": "lstm-facebook__dinov2-small", "doc_model": "late-fusion-efficientnet_b0+bert-base-uncased", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.7479, "pq": 0.9488, "uas": 0.9527, "las": 0.9408}, {"start_model": "lstm-facebook__dinov2-small", "doc_model": "bert-ft-bert-base-uncased", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.7369, "pq": 0.9488, "uas": 0.9527, "las": 0.9379}, {"start_model": "lstm-facebook__dinov2-small", "doc_model": "late-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.7369, "pq": 0.9488, "uas": 0.9527, "las": 0.9379}, {"start_model": "lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "late-fusion-efficientnet_b0+bert-base-uncased", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.757, "pq": 0.9341, "uas": 0.9408, "las": 0.9349}, {"start_model": "lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "bert-ft-bert-base-uncased", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.7459, "pq": 0.9341, "uas": 0.9408, "las": 0.932}, {"start_model": "lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "late-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.7459, "pq": 0.9341, "uas": 0.9408, "las": 0.932}, {"start_model": "knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "early-fusion-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "start_macro_f1": 0.9534, "doc_macro_f1_e2e": 0.7432, "pq": 0.9466, "uas": 0.9586, "las": 0.929}, {"start_model": "knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "early-fusion-efficientnet_b0+bert-base-uncased", "start_macro_f1": 0.9534, "doc_macro_f1_e2e": 0.7588, "pq": 0.9466, "uas": 0.9586, "las": 0.9231}, {"start_model": "lstm-facebook__dinov2-small", "doc_model": "early-fusion-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.6912, "pq": 0.9488, "uas": 0.9527, "las": 0.9172}, {"start_model": "lstm-facebook__dinov2-small", "doc_model": "early-fusion-efficientnet_b0+bert-base-uncased", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.7234, "pq": 0.9488, "uas": 0.9527, "las": 0.9142}, {"start_model": "lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "early-fusion-microsoft__dit-large-finetuned-rvlcdip+sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.7042, "pq": 0.9341, "uas": 0.9408, "las": 0.9112}, {"start_model": "lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2", "doc_model": "early-fusion-efficientnet_b0+bert-base-uncased", "start_macro_f1": 0.95, "doc_macro_f1_e2e": 0.7203, "pq": 0.9341, "uas": 0.9408, "las": 0.9053}]};
+const REGIME_LABEL = { baseline: "Baseline", sequence: "Sequence", fusion: "Fusion", finetune: "Finetune" };
+const REGIME_VAR = { baseline: "--baseline-c", sequence: "--sequence-c", fusion: "--fusion-c", finetune: "--finetune-c" };
+
+function renderBoard(key, rows) {
+  const maxF1 = Math.max(...rows.map(r => r.macro_f1));
+  const regimesPresent = [...new Set(rows.map(r => r.regime))];
+
+  const tabsEl = document.querySelector(`.tabs[data-board="${key}"]`);
+  const allTab = mkTab("All", true);
+  tabsEl.appendChild(allTab);
+  regimesPresent.forEach(rg => tabsEl.appendChild(mkTab(REGIME_LABEL[rg] || rg, false, rg)));
+
+  const rowsEl = document.getElementById(`rows-${key}`);
+  rows.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.className = "row" + (i < 3 ? " top" : "");
+    row.dataset.regime = r.regime;
+
+    const rank = document.createElement("div");
+    rank.className = "rank mono";
+    rank.textContent = "#" + (i + 1);
+
+    const modelCell = document.createElement("div");
+    modelCell.className = "model-cell";
+    const name = document.createElement("div");
+    name.className = "model-name";
+    name.textContent = r.algo + (r.backbones.length > 1 ? " · " + r.backbones.join(" + ") : "");
+    name.title = r.model;
+    const meta = document.createElement("div");
+    meta.className = "model-meta";
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.style.background = `var(${REGIME_VAR[r.regime]})`;
+    pill.textContent = REGIME_LABEL[r.regime] || r.regime;
+    meta.appendChild(pill);
+    if (r.backbones.length === 1) {
+      const tag = document.createElement("span");
+      tag.className = "backbone-tag";
+      tag.textContent = r.backbones[0];
+      meta.appendChild(tag);
+    }
+    modelCell.appendChild(name);
+    modelCell.appendChild(meta);
+
+    const barCell = document.createElement("div");
+    barCell.className = "bar-cell";
+    const fill = document.createElement("div");
+    fill.className = "bar-fill";
+    fill.style.width = (r.macro_f1 / maxF1 * 100).toFixed(1) + "%";
+    barCell.appendChild(fill);
+
+    const score = document.createElement("div");
+    score.className = "score mono";
+    score.textContent = r.macro_f1.toFixed(3);
+
+    row.appendChild(rank);
+    row.appendChild(modelCell);
+    row.appendChild(barCell);
+    row.appendChild(score);
+    rowsEl.appendChild(row);
+  });
+
+  tabsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab");
+    if (!btn) return;
+    [...tabsEl.querySelectorAll(".tab")].forEach(t => t.setAttribute("aria-pressed", "false"));
+    btn.setAttribute("aria-pressed", "true");
+    const filter = btn.dataset.regime || null;
+    [...rowsEl.querySelectorAll(".row")].forEach(row => {
+      row.classList.toggle("hidden", filter && row.dataset.regime !== filter);
+    });
+  });
+
+  function mkTab(label, pressed, regime) {
+    const b = document.createElement("button");
+    b.className = "tab";
+    b.type = "button";
+    b.textContent = label;
+    b.setAttribute("aria-pressed", pressed ? "true" : "false");
+    if (regime) b.dataset.regime = regime;
+    return b;
+  }
+}
+
+function shortName(modelId, lookupRows) {
+  const hit = lookupRows.find(r => r.model === modelId);
+  if (!hit) return modelId;
+  return hit.algo + (hit.backbones.length ? " (" + hit.backbones.join(" + ") + ")" : "");
+}
+
+function renderPipeline(rows) {
+  const tbody = document.getElementById("pipeline-body");
+  rows.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    if (i === 0) tr.className = "winner";
+    const pairTd = document.createElement("td");
+    pairTd.innerHTML =
+      `<span class="pair-model">${shortName(r.start_model, DATA.start_page)}</span><span class="pair-arrow">→</span><span class="pair-model">${shortName(r.doc_model, DATA.doc_type)}</span>` +
+      (i === 0 ? `<span class="win-badge">Best</span>` : "");
+    tr.appendChild(pairTd);
+
+    const startTd = document.createElement("td");
+    startTd.className = "num";
+    startTd.textContent = r.start_macro_f1.toFixed(3);
+    tr.appendChild(startTd);
+
+    const docTd = document.createElement("td");
+    docTd.className = "num";
+    docTd.textContent = r.doc_macro_f1_e2e.toFixed(3);
+    tr.appendChild(docTd);
+
+    [r.pq, r.uas, r.las].forEach(v => {
+      const td = document.createElement("td");
+      td.className = "num";
+      td.textContent = v.toFixed(3);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById("stat-start-n").textContent = DATA.start_page.length;
+document.getElementById("stat-doc-n").textContent = DATA.doc_type.length;
+renderBoard("start_page", DATA.start_page);
+renderBoard("doc_type", DATA.doc_type);
+renderPipeline(DATA.pipeline);
+</script>

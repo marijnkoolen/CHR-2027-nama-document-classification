@@ -1,0 +1,7 @@
+pair	start_macro_precision	start_macro_recall	start_macro_f1	start_accuracy	doc_accuracy_e2e	doc_macro_f1_e2e	doc_weighted_f1_e2e	pq	sq	rq	uas	las
+lstm-facebook__dinov2-small__late-fusion-efficientnet_b0+bert-base-uncased	0.9527	0.9474	0.95	0.9586	0.9622	0.7479	0.9727	0.9488	0.9925	0.956	0.9527	0.9408
+lstm-facebook__dinov2-small__late-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased	0.9527	0.9474	0.95	0.9586	0.958	0.7369	0.9685	0.9488	0.9925	0.956	0.9527	0.9379
+knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2__late-fusion-efficientnet_b0+bert-base-uncased	0.9576	0.9495	0.9534	0.9615	0.9706	0.7963	0.9816	0.9466	0.9932	0.9531	0.9586	0.9527
+knn-facebook__dinov2-small+sentence-transformers__paraphrase-multilingual-mpnet-base-v2__late-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased	0.9576	0.9495	0.9534	0.9615	0.9664	0.7853	0.9774	0.9466	0.9932	0.9531	0.9586	0.9497
+lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2__late-fusion-efficientnet_b0+bert-base-uncased	0.9527	0.9474	0.95	0.9586	0.9664	0.757	0.9779	0.9341	0.9962	0.9378	0.9408	0.9349
+lstm-sentence-transformers__paraphrase-multilingual-mpnet-base-v2__late-fusion-microsoft__dit-large-finetuned-rvlcdip+bert-base-uncased	0.9527	0.9474	0.95	0.9586	0.9622	0.7459	0.9737	0.9341	0.9962	0.9378	0.9408	0.932

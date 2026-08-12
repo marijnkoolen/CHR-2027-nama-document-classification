@@ -1,0 +1,2 @@
+mean=iid
+dispersion_winner=iid_disp

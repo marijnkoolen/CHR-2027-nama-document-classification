@@ -1,0 +1,529 @@
+% Model equations for the dossier-composition and dossier-size/family-composition
+% analyses, with a brief description of how each model is used.
+%
+% Requires: amsmath, amssymb (and mathtools if you want \DeclarePairedDelimiter etc.)
+% \usepackage{amsmath,amssymb}
+%
+% Convenience macros (optional -- expand the operators below by hand if you'd
+% rather not add macros to your preamble):
+\newcommand{\Dir}{\mathrm{Dirichlet}}
+\newcommand{\Mult}{\mathrm{Multinomial}}
+\newcommand{\NegBinom}{\mathrm{NegBinom}}
+\newcommand{\Binom}{\mathrm{Binomial}}
+\newcommand{\BetaBinom}{\mathrm{BetaBinomial}}
+\newcommand{\HalfNormal}{\mathrm{HalfNormal}}
+\newcommand{\Gammadist}{\mathrm{Gamma}}
+
+% ============================================================================
+\section{Dossier composition analysis}
+% ============================================================================
+
+The composition analysis (occurrence, co-occurrence, dispersion, typical
+order of the 11 tracked document types) is built on a single foundation: a
+Bayesian confusion matrix for each classifier (document type; start-page/
+segmentation), used to correct every downstream statistic for the fact that
+predicted labels are not ground truth. (``Testimonial medical letter'' used
+to be merged into ``Testimonial medical form'' as too thin/unreliable to
+track on its own; re-evaluated on a later, more accurate classifier it
+turned out to have good precision/recall and enough test-set support, so
+it's now its own tracked type -- $K$ below reflects that, and the earlier
+merge is no longer part of the pipeline.)
+
+\subsection{Document-type confusion matrix}
+\label{sec:confusion-matrix}
+
+For each true document type $i \in \{1,\dots,K\}$ ($K=12$: the 11 tracked
+types plus a residual ``Other'' class), the row of predicted-type counts in
+the held-out test set is modeled as a Dirichlet-multinomial with hierarchical
+partial pooling across the $K$ rows, via a single shared concentration
+$\kappa$:
+\begin{align}
+  (n_{i1}, \dots, n_{iK}) &\sim \Mult(n_i,\, p_i), \qquad n_i = \textstyle\sum_j n_{ij} \\
+  p_i &\sim \Dir(\kappa \, b_i) \\
+  \kappa &= \exp(\log\kappa), \qquad \log\kappa \sim \mathcal{N}(\log 4,\, 0.75^2)
+\end{align}
+where $b_i$ is a fixed (not learned) weakly-informative baseline prior mean,
+mostly mass on the diagonal (predicted = true) with the remainder spread
+according to the test set's overall predicted-label marginal $\bar m$:
+\begin{equation}
+  b_i = 0.7 \, e_i + 0.3 \, \bar m, \qquad e_i = \text{one-hot vector at position } i.
+\end{equation}
+Fit with NUTS via PyMC on the test-set confusion counts.
+$p_i$ (posterior) gives $P(\text{predicted}=j \mid \text{true}=i)$ for every
+type pair, including thinly-supported types (e.g.\ Approval notice, $n=9$ in
+the test set), which borrow strength from the population of rows rather than
+producing a noisy empirical row from a handful of examples.
+
+\textit{Use:} this is the object every corrected statistic in the composition
+analysis (\S\ref{sec:occurrence}--\S\ref{sec:order}) and every per-document-type
+correction in the dossier-size analysis (\S\ref{sec:doctype-uncertainty}) is
+built on. It is fit once per model/prediction pipeline and reused everywhere.
+
+\subsection{Start-page (segmentation) confusion matrix}
+\label{sec:start-confusion}
+
+Identical model at $K=2$ (\{no, yes\}), degenerate to a Beta-Binomial:
+\begin{equation}
+  (n_{i,\text{no}}, n_{i,\text{yes}}) \sim \Mult(n_i,\, p_i), \qquad
+  p_i \sim \Dir(\kappa\, b_i), \qquad i \in \{\text{no}, \text{yes}\}
+\end{equation}
+with the same $\log\kappa \sim \mathcal{N}(\log 4, 0.75^2)$ prior and diagonal-
+weighted baseline. $\texttt{predicted\_segment\_id}$ is a deterministic
+function of \texttt{predicted\_start\_page} (a new document begins exactly
+when it is \texttt{"yes"}), so this matrix's reliability propagates directly
+into segment-boundary (and therefore document-count) uncertainty.
+
+\textit{Use:} corrects for missed document boundaries (undercounting
+instances, merging two documents into one) and spurious ones (overcounting,
+splitting one document into two) -- the segmentation half of every ``joint''
+correction below, and the sole correction needed for the aggregate
+\texttt{num\_docs} checks in the dossier-size analysis
+(\S\ref{sec:aggregate-uncertainty}), since total document counts do not
+depend on document \emph{type}.
+
+\subsection{Multiple imputation (correcting predicted labels)}
+\label{sec:mi}
+
+Given posterior draws $p^{(d)}$ of a confusion matrix (either one above) and
+a Dirichlet-smoothed empirical prior $\pi$ over true labels from the test
+set ($\pi_i \propto n_i + 1$), Bayes' rule inverts $P(\text{pred}\mid\text{true})$
+into $P(\text{true}\mid\text{pred})$ for an instance with predicted label $j$:
+\begin{equation}
+  P(\text{true}=i \mid \text{pred}=j,\, d) =
+    \frac{p^{(d)}_{ij}\, \pi_i}{\sum_{i'} p^{(d)}_{i'j}\, \pi_{i'}}.
+\end{equation}
+Two modes, used throughout both analyses:
+\begin{itemize}
+  \item \textbf{Multiple imputation (rigorous).} For each of $D=200$
+    posterior draws, sample one hard true label per page/segment from the
+    categorical distribution above (start\_page first, to rebuild segment
+    boundaries; document type second, on the resulting segments), recompute
+    the statistic of interest on that draw's hard-imputed data, and pool the
+    $D$ results (mean and 3rd/97th percentile as a 94\% HDI). This
+    propagates \emph{both} the classifier's point-estimate bias and its own
+    posterior uncertainty.
+  \item \textbf{Point estimate (fast, CPU-only).} Use the posterior
+    \emph{mean} confusion matrix $\bar p$ in place of $p^{(d)}$, giving one
+    soft/fractional expected count per instance instead of $D$ resampled
+    draws. Corrects the average bias but understates the classifier's own
+    uncertainty; used for the dossier-size analysis's uncertainty checks
+    (\S\ref{sec:doctype-uncertainty}--\S\ref{sec:aggregate-uncertainty}),
+    where a full multiple-imputation run needs GPU-scale compute.
+\end{itemize}
+
+\subsection{Occurrence}
+\label{sec:occurrence}
+
+For a per-dossier per-type count matrix $C \in \mathbb{N}^{n_{\text{dossiers}}
+\times K}$ (from raw predicted labels, or one multiple-imputation draw),
+per-type summary statistics:
+\begin{align}
+  \text{prevalence}_k &= \tfrac{1}{n}\textstyle\sum_d \mathbb{1}[C_{d,k}>0] \\
+  \text{mean count given present}_k &=
+    \frac{\sum_d C_{d,k}}{\sum_d \mathbb{1}[C_{d,k}>0]}
+\end{align}
+computed once naively and once per multiple-imputation draw (\S\ref{sec:mi}),
+pooled to a posterior mean and 94\% HDI.
+
+\textit{Use:} answers which document types are common vs.\ rare, and whether
+they tend to occur once or several times per dossier -- the naive-vs-corrected
+gap shows how much the classifier's uneven per-type reliability would have
+distorted a naive reading.
+
+\subsection{Co-occurrence}
+\label{sec:cooccurrence}
+
+For a pair of types $(A,B)$, the $2\times2$ presence/absence contingency
+counts across dossiers ($n_{11}$ both present, $n_{10}$/$n_{01}$ one only,
+$n_{00}$ neither) have a closed-form posterior under a flat
+$\Dir(1,1,1,1)$ prior:
+\begin{equation}
+  (p_{11}, p_{10}, p_{01}, p_{00}) \sim
+    \Dir(n_{11}{+}1,\, n_{10}{+}1,\, n_{01}{+}1,\, n_{00}{+}1),
+  \qquad
+  \log\text{OR} = \log\frac{p_{11}\, p_{00}}{p_{10}\, p_{01}}.
+\end{equation}
+No MCMC is needed -- $K=20$ draws from this closed form per multiple-imputation
+draw, pooled across all $D \times K = 4000$ samples, give a fully Bayesian
+posterior for the pairwise log-odds ratio that reflects both ordinary
+dossier-sampling uncertainty and classifier uncertainty.
+
+\paragraph{Richness-confound control (Mantel--Haenszel).} Raw pairwise
+log-odds ratios are confounded by dossiers varying in how many of the $K{-}1$
+tracked types they contain at all (``richness''). Dossiers are split into
+$S=4$ strata by richness rank \emph{excluding} $A$ and $B$'s own two types,
+and the standard Mantel--Haenszel estimator is applied to the per-stratum
+$2\times2$ tables:
+\begin{equation}
+  \log\text{OR}_{\text{MH}} = \log\!\left(\frac{\sum_s r_s}{\sum_s s_s}\right),
+  \qquad
+  r_s = \frac{n_{11,s}\, n_{00,s}}{n_s}, \quad
+  s_s = \frac{n_{10,s}\, n_{01,s}}{n_s},
+\end{equation}
+with the Robins--Breslow--Greenland variance estimator:
+\begin{equation}
+  \widehat{\mathrm{Var}}(\log\text{OR}_{\text{MH}}) =
+    \frac{\sum_s P_s R_s}{2\left(\sum_s R_s\right)^2} +
+    \frac{\sum_s (P_s S_s + Q_s R_s)}{2 \sum_s R_s \sum_s S_s} +
+    \frac{\sum_s Q_s S_s}{2\left(\sum_s S_s\right)^2},
+\end{equation}
+where $P_s = (n_{11,s}{+}n_{00,s})/n_s$ and $Q_s = (n_{10,s}{+}n_{01,s})/n_s$
+(with $R_s, S_s$ as $r_s, s_s$ above, unnormalized by $n_s$ in the variance
+terms per the standard formula).
+
+\textit{Use:} answers which document types tend to co-occur more or less
+than chance. The MH-controlled estimate is the one reported as the
+substantive finding; the raw estimate is kept alongside for transparency
+about how much of the raw signal was the richness confound (in this corpus,
+\emph{all} pairs are raw-positive, a classic co-occurrence artifact, that
+mostly persists but shrinks after MH control).
+
+\subsection{Dispersion}
+\label{sec:dispersion}
+
+For a dossier with $n$ segments containing $k$ instances of a given type,
+the number of contiguous \emph{runs} of that type ($1$ if all $k$ are
+adjacent, up to $k$ if none are) is compared against its exact closed-form
+null distribution under uniform-random placement (the Wald--Wolfowitz runs
+test):
+\begin{align}
+  \mathbb{E}[\text{runs}] &= 1 + \frac{2k(n-k)}{n} \\
+  \mathrm{Var}[\text{runs}] &= \frac{2k(n-k)\bigl(2k(n-k) - n\bigr)}{n^2(n-1)}
+\end{align}
+Pooled across all qualifying dossiers ($k\ge2$) for a type, into one
+standardized statistic:
+\begin{equation}
+  z = \frac{\sum_d \left(\text{runs}_d - \mathbb{E}[\text{runs}_d]\right)}
+           {\sqrt{\sum_d \mathrm{Var}[\text{runs}_d]}},
+  \qquad
+  \text{contiguity}_d = \frac{\text{runs}_d - 1}{k_d - 1} \in [0,1]
+\end{equation}
+(contiguity: descriptive, 0 = one solid block, 1 = maximally scattered).
+Both computed naively and per multiple-imputation draw (\S\ref{sec:mi}).
+
+\textit{Use:} answers whether repeated instances of a type are filed
+together (clustered, credibly negative $z$) or scattered through the dossier
+(credibly positive $z$), net of each dossier's own length and that type's
+own instance count -- which a raw contiguity score alone cannot control for.
+
+\subsection{Typical sequence order}
+\label{sec:order}
+
+\paragraph{Marginal position.} Each type's instances' normalized position
+in the dossier ($\text{order\_in\_dossier} / (\text{length}-1) \in [0,1]$,
+0 = first) are pooled across the corpus; mean position (with SE-based
+interval) shows where a type typically sits, SD shows how consistent that
+is.
+
+\paragraph{Pairwise order (Bradley--Terry).} For every dossier where both
+types $A$ and $B$ occur, record whether $A$'s first occurrence precedes
+$B$'s. A single latent ``typical sequence rank'' $\theta$ per type (one
+reference type fixed at $\theta_{\text{ref}}=0$ for identifiability) is fit
+as a Binomial GLM with a logit link on a $\pm1$ contrast design, equivalent
+to the Bradley--Terry paired-comparison model:
+\begin{align}
+  n_{A\text{-first}} &\sim \Binom\!\bigl(n_{A\text{-first}} + n_{B\text{-first}},\; \sigma(\theta_B - \theta_A)\bigr) \\
+  \sigma(x) &= \frac{1}{1+e^{-x}}, \qquad
+  P(A \text{ before } B) = \sigma(\theta_B - \theta_A)
+\end{align}
+Fit once per multiple-imputation draw (statsmodels GLM), sampled from its
+asymptotic Normal approximation ($\hat\theta, \widehat{\mathrm{Cov}}(\hat\theta)$)
+and pooled across draws -- one unified model instead of $\binom{11}{2}=55$
+separate pairwise tests, giving $P(A\text{ before }B)$ for any pair directly
+from the pooled $\theta$ posteriors.
+
+\textit{Use:} answers (a) whether each type has a fairly fixed typical
+position or is spread throughout the dossier, and (b) for any co-occurring
+pair, whether there is a consistent typical order (e.g.\ ``D.1 usually before
+D.2''), with a self-test against synthetic data of known rank verifying the
+sign convention before trusting it on real data.
+
+% ============================================================================
+\section{Dossier size and family composition analysis}
+% ============================================================================
+
+Every model in this analysis is a negative-binomial (or, for \S\ref{sec:num-adults},
+binomial/beta-binomial) GLM with hierarchical partial pooling of a year-level
+intercept, non-centered for sampling efficiency:
+\begin{align}
+  y_n &\sim \NegBinom(\mu_n,\, \alpha), &
+  \mathrm{Var}(y_n) &= \mu_n + \mu_n^2/\alpha, \\
+  \log \mu_n &= \alpha_0 + \alpha_{\text{year}}[y(n)] + \dots, &
+  \alpha_{\text{year}}[y] &= z_{\text{year}}[y]\, \sigma_{\text{year}}, \\
+  z_{\text{year}}[y] &\sim \mathcal{N}(0,1), &
+  \sigma_{\text{year}} &\sim \HalfNormal(1),
+\end{align}
+so sparse years borrow strength from the rest rather than being estimated in
+isolation. Structural questions (which predictor form, whether a temporal
+trend is real, which likelihood is appropriate) are answered by comparing
+models via leave-one-out cross-validation (LOO/ELPD), not by fitting one
+model and trusting it.
+
+\subsection{Composition predicts dossier size (superseded, but not by a data bug anymore)}
+\label{sec:size-ab}
+
+Four models, all NB with the year-hierarchy above, crossed on (i) how many
+age groups \texttt{persons}$_n$ is split into and (ii) whether there's an
+era interaction:
+\begin{align}
+  \text{A:}\quad \log\mu_n &= \alpha_0 + \alpha_{\text{year}}[y(n)] + \beta_p \cdot \text{persons}_n \\
+  \text{A\_era:}\quad \log\mu_n &= \text{A} + \beta_{pe} \cdot \text{persons}_n \cdot \text{era}_n \\
+  \text{B:}\quad \log\mu_n &= \alpha_0 + \alpha_{\text{year}}[y(n)] + \beta_a \cdot \text{adults}_n + \beta_m \cdot \text{minors}_n \\
+  \text{C:}\quad \log\mu_n &= \text{B} + \beta_{ae} \cdot \text{adults}_n \cdot \text{era}_n
+\end{align}
+\texttt{adults}/\texttt{minors} \emph{originally} used an era-switching
+18+/16+ adult definition, later found to be a data-generation bug rather
+than a real policy change; the underlying data has since been corrected to
+a constant 18+ threshold throughout (matching \texttt{num\_18+} in
+\S\ref{sec:three-group}), and A/B/C/A\_era are all fit on the corrected
+data. The era-switching definition is a documented historical artifact of
+this pipeline now, not a property of any currently-fit model.
+
+\textit{Use:} A vs.\ A\_era and B vs.\ C (LOO) test whether there's any era
+effect at the 1- and 2-group level, respectively; A vs.\ B tests whether
+splitting persons into adults/minors predicts size better than raw unit
+size. \textbf{Superseded} by the three-group model (\S\ref{sec:three-group})
+-- but, now that the data bug is fixed, for a genuinely different reason
+than before: not because the covariates were wrong, but because the
+two-group specification is simply coarser and loses decisively to three
+groups on predictive grounds (\S\ref{sec:grid}). Kept as the ``1 group''
+and ``2 groups'' rows of that grid, not as a historical reproduction of a
+since-fixed bug.
+
+\subsection{The full comparison grid: how many groups, and does era matter?}
+\label{sec:grid}
+
+The six models of \S\ref{sec:size-ab} and \S\ref{sec:three-group} (A,
+A\_era, B, C, B3, C3 -- D3 held out as a separate robustness check, see
+below) share the same outcome (\texttt{num\_docs}), same likelihood, same
+dossier subset, and (since the fix above) the same underlying 18+ adult
+threshold, so all six are directly LOO-comparable in one \texttt{az.compare}
+call, organized as a $3\times2$ grid:
+\[
+\begin{array}{lll}
+  & \text{no era interaction} & \text{with era interaction} \\
+  \text{(1) persons} & \text{A} & \text{A\_era} \\
+  \text{(2) adult/minor} & \text{B} & \text{C} \\
+  \text{(3) adult/pre-adult/minor} & \text{B3} & \text{C3}
+\end{array}
+\]
+
+\textit{Use:} isolates two previously-conflated questions -- how many age
+groups predict dossier size, and whether there's an era interaction --
+which earlier only ever varied together (the original A/B/C used an
+era-switching covariate \emph{and} lacked a pre-adult group at the same
+time). The pattern found: moving down a row (more groups) is decisive at
+every step (tens of elpd, many SE); moving across a row (adding an era
+term) is never decisive at the group level, in either row 2 or row 3, even
+though the row-3 era term is individually credible at the coefficient level
+(\S\ref{sec:three-group}) -- a coefficient-credibility finding and a
+model-comparison finding that legitimately disagree, not a contradiction.
+D3 (era interaction on \emph{all three} groups) is reported alongside C3 as
+a seventh model in a companion table, testing whether era matters for any
+group broadly rather than pre-adults specifically; it does not decisively
+beat C3 either, for the same reason coarse era terms don't earn their keep
+elsewhere in the grid.
+
+\subsection{Per-document-type breakdown, two-group (superseded)}
+\label{sec:doctype-2group}
+
+Partially pooled across the $T=11$ tracked document types $k$:
+\begin{align}
+  \log\mu_{n,k} &= \alpha_{\text{type}}[k] + \alpha_{\text{year,type}}[y(n),k]
+    + \beta_a[k]\cdot\text{adults}_n + \beta_m[k]\cdot\text{minors}_n \\
+  \alpha_{\text{type}}[k] &= \mu_\alpha + z_\alpha[k]\,\sigma_\alpha, \qquad
+    \beta_a[k] = \mu_{\beta_a} + z_{\beta_a}[k]\,\sigma_{\beta_a}, \quad(\text{similarly } \beta_m[k])
+\end{align}
+with population-level (hyperprior) means/SDs shared across types (partial
+pooling, same rationale as the year hierarchy) and a per-type year random
+effect $\alpha_{\text{year,type}}$ sharing one $\sigma_{\text{year}}$ across
+types. $\delta[k] = \beta_a[k]-\beta_m[k]$ is the key comparison quantity
+($\delta[k]\gg0$: type $k$ is adult-driven; $\delta[k]\approx0$: scales with
+total persons, not age).
+
+\textit{Use:} same corrected constant-threshold \texttt{adults}/\texttt{minors}
+covariates as \S\ref{sec:size-ab}; \textbf{superseded} by the three-group
+per-type model (\S\ref{sec:doctype-3group}) for the same reason as
+\S\ref{sec:size-ab} -- a coarser specification, not a data-bug artifact.
+
+\subsection{Is dossier size changing over time?}
+\label{sec:temporal}
+
+Same NB/year-hierarchy base, plus a directional mean term $f_{\text{mean}}$
+and (optionally) a directional dispersion term $f_{\text{disp}}$, net of
+composition:
+\begin{align}
+  \log\mu_n &= \alpha_0 + \alpha_{\text{year}}[y(n)] + f_{\text{mean}}(n)
+    + \beta_a\cdot\text{adults}_n + \beta_m\cdot\text{minors}_n \\
+  f_{\text{mean}}(n) &=
+    \begin{cases}
+      0 & \text{iid} \\
+      \beta_{\text{trend}}\cdot \tilde y_n & \text{trend} \\
+      \beta_{\text{step}}\cdot \text{era}_n & \text{step} \\
+      \beta_{\text{step}}\,\text{era}_n + \beta_{\text{pre}}\,\tilde y_n(1{-}\text{era}_n) + \beta_{\text{post}}\,\tilde y_n\,\text{era}_n & \text{step\_trend}
+    \end{cases}
+\end{align}
+where $\tilde y_n = \text{travel\_year}_n - 1956$ (centered on the policy
+change). Dispersion $\alpha$ likewise allowed to vary by year, either
+constant ($\alpha \sim \Gammadist(2, 0.1)$), a smooth structure
+$\log\alpha_n = \gamma_0 + f_{\text{disp}}(n)$ (same four forms as
+$f_{\text{mean}}$, on $\gamma$ coefficients), or fully unconstrained per year
+(``iid''): $\log\alpha_{\text{year,disp}}[y] = \gamma_0 + z_{\text{year,disp}}[y]\,\sigma_{\text{year,disp}}$.
+
+\textit{Use:} Stage 1 compares the four $f_{\text{mean}}$ structures via LOO
+to test whether dossier size shows a real directional trend (vs.\ plain
+year-to-year noise). Stage 2, given the Stage-1 winner, compares the three
+dispersion structures -- checking both a smooth trend \emph{and} an
+unconstrained per-year estimate against constant dispersion, since a smooth
+trend can win against constant while still losing badly to the unconstrained
+alternative (as happened here). The same model (outcome and covariates
+swapped) is reused in \S\ref{sec:family-temporal} for \texttt{num\_persons}/\texttt{num\_adults}.
+
+\subsection{Is family composition itself changing over time?}
+\label{sec:family-temporal}
+
+Identical to \S\ref{sec:temporal}'s mean/dispersion structure search, with
+$y_n \in \{\text{num\_persons}_n, \text{num\_adults}_n\}$ as the outcome and
+\emph{no} composition covariates (composition is the outcome here, not a
+control):
+\begin{equation}
+  \log\mu_n = \alpha_0 + \alpha_{\text{year}}[y(n)] + f_{\text{mean}}(n).
+\end{equation}
+
+\textit{Use:} tests whether the changing document burden found in
+\S\ref{sec:temporal}/\S\ref{sec:three-group} reflects the population of
+migrating families changing over time, or administrative practice changing
+around a stable population.
+
+\subsection{num\_adults: Binomial reframing}
+\label{sec:num-adults}
+
+\texttt{num\_adults} is under-dispersed relative to Poisson in every year
+(NB cannot represent variance \emph{below} the mean), so it is reframed as a
+Binomial draw -- ``successes out of \texttt{num\_persons} trials'':
+\begin{align}
+  \text{adults}_n &\sim \Binom(\text{persons}_n,\; p_n), &
+  \mathrm{logit}(p_n) &= \alpha_0 + \alpha_{\text{year}}[y(n)] + f_{\text{mean}}(n)
+\end{align}
+with $f_{\text{mean}}$ the same four structures as \S\ref{sec:temporal}. If
+LOO shows real extra-binomial dispersion, a Beta-Binomial extension:
+\begin{equation}
+  \text{adults}_n \sim \BetaBinom(\text{persons}_n,\; p_n\kappa_n,\; (1{-}p_n)\kappa_n),
+  \qquad \log\kappa_n = \gamma_0 + f_{\text{disp}}(n)
+\end{equation}
+with $f_{\text{disp}}$ paralleling the NB dispersion structures of
+\S\ref{sec:temporal} (constant/trend/iid on $\log\kappa$).
+
+\textit{Use:} Stage 0 (Binomial vs.\ Beta-Binomial, LOO) tests whether there
+is any ``spread'' question left to ask once correctly conditioned on unit
+size -- in this analysis plain Binomial wins, so Stage 2 (dispersion
+structure) is skipped and Stage 1 (mean/logit-$p$ structure) is the whole
+story.
+
+\subsection{The correction: three groups, not two}
+\label{sec:three-group}
+
+Following the domain-expert correction (the legal adult threshold was
+constant at 18+ throughout; a separate paperwork requirement for 16--17
+year-olds, ``pre-adults,'' changed in 1956), groups are rebuilt directly from
+\texttt{num\_18+}/\texttt{num\_16+}:
+\begin{equation}
+  \log\mu_n = \alpha_0 + \alpha_{\text{year}}[y(n)]
+    + \beta_m\cdot\text{minor}_n + \beta_{pa}\cdot\text{preadult}_n + \beta_a\cdot\text{adult}_n
+    \;[+\ \text{era terms}]
+\end{equation}
+Three variants: \textbf{B3} no era interaction; \textbf{C3} adds
+$\beta_{pa,\text{era}}\cdot\text{preadult}_n\cdot\text{era}_n$ (the
+domain-expert account: only the pre-adult requirement changed); \textbf{D3}
+adds era interactions on all three groups (a robustness check).
+
+\textit{Use:} the corrected replacement for \S\ref{sec:size-ab}. C3 vs.\ B3
+(LOO) tests whether the pre-adult-specific account is needed at all; D3 vs.\
+C3 tests whether the effect is genuinely isolated to pre-adults rather than a
+broader shift. Also refit on segmentation-corrected \texttt{num\_docs}
+(\S\ref{sec:aggregate-uncertainty}) as a robustness check.
+
+\subsection{Which document types drove it: three-group per-type}
+\label{sec:doctype-3group}
+
+Same three-group linear predictor as \S\ref{sec:three-group}, partially
+pooled across the $T=11$ document types (same hyperprior structure as
+\S\ref{sec:doctype-2group}), fit separately for three periods (full,
+pre-1956, post-1956):
+\begin{equation}
+  \log\mu_{n,k} = \alpha_{\text{type}}[k] + \alpha_{\text{year,type}}[y(n),k]
+    + \beta_m[k]\cdot\text{minor}_n + \beta_{pa}[k]\cdot\text{preadult}_n + \beta_a[k]\cdot\text{adult}_n
+\end{equation}
+
+\textit{Use:} identifies which specific document types drive the aggregate
+pre-adult shrinkage from \S\ref{sec:three-group} (a direct, non-parametric
+alternative to a single pooled era-interaction term, better suited to seeing
+type-level heterogeneity with this much data per type). Pre/post-1956
+paired differences in $\beta_{pa}[k]$ are computed by pairing posterior
+draws index-wise across the two independent period fits (valid since the two
+posteriors are independent random variables) and computing $P(\text{post} <
+\text{pre})$ per type. Also refit on document-type- and segmentation-corrected
+counts (\S\ref{sec:doctype-uncertainty}).
+
+\subsection{Count vs.\ presence specification check}
+\label{sec:count-presence}
+
+For each type $k$, two full-period variants of \S\ref{sec:doctype-3group},
+differing only in how the pre-adult predictor enters:
+\begin{align}
+  \text{count:}\quad & \beta_{pa}[k]\cdot\text{preadult}_n \\
+  \text{presence:}\quad & \beta_{pa}[k]\cdot \mathbb{1}[\text{preadult}_n>0]
+\end{align}
+Compared via a \emph{per-type grouped} pointwise LOO (summing each model's
+pointwise $\mathrm{elpd}_{\text{loo},i}$ within type $k$'s rows only, rather
+than one aggregate comparison across all rows):
+\begin{equation}
+  \Delta_k = \sum_{i:\,\text{type}(i)=k} \bigl(\mathrm{elpd}_{\text{loo},i}^{\text{presence}} - \mathrm{elpd}_{\text{loo},i}^{\text{count}}\bigr)
+\end{equation}
+
+\textit{Use:} tests, per type, whether the pre-adult effect is better
+modeled as a linear count (each extra pre-adult adds more documents) or a
+presence/absence effect (the form is filed once, or not, regardless of
+count) -- motivated by checking whether a different functional form could
+explain an initially-puzzling type-level pattern (it did not; every
+difference is small relative to its uncertainty).
+
+\subsection{Classifier-uncertainty correction: per document type}
+\label{sec:doctype-uncertainty}
+
+Applies the multiple-imputation / point-estimate machinery of
+\S\ref{sec:mi} (both confusion matrices jointly: document-type,
+\S\ref{sec:confusion-matrix}, and segmentation, \S\ref{sec:start-confusion})
+to the per-dossier per-type counts feeding \S\ref{sec:doctype-3group} and
+\S\ref{sec:count-presence}, refitting those same models on the corrected
+counts (point-estimate mode: a Negative-Binomial likelihood accepts the
+resulting non-integer ``observed'' counts directly).
+
+\textit{Use:} checks whether the per-type story in \S\ref{sec:doctype-3group}
+is an artifact of uneven classifier reliability. In this analysis the
+credible pre-adult shrinkage narrows to a single type (D.1) once corrected,
+and one type (D.2) newly shows a credible \emph{increase} not visible in the
+raw fit -- both readings support the same revised domain-expert account
+(officer discretion over which forms pre-adults filed), not conflicting
+ones.
+
+\subsection{Classifier-uncertainty correction: aggregate num\_docs}
+\label{sec:aggregate-uncertainty}
+
+Unlike \S\ref{sec:doctype-uncertainty}, total document count per dossier
+does not depend on document \emph{type} -- only on where segments start --
+so only the start-page confusion matrix (\S\ref{sec:start-confusion})
+applies, via its posterior-mean point correction $\bar p$
+(\S\ref{sec:mi}). For dossier $n$ with pages $p=1,\dots,P_n$:
+\begin{equation}
+  \widehat{\text{num\_docs}}_n = 1 + \sum_{p=2}^{P_n} P(\text{true start}=\text{yes} \mid \text{pred}_p,\, \bar p)
+\end{equation}
+(the first page of every dossier is forced to contribute $1$, since a
+dossier cannot have zero documents -- a structural assumption, not a
+classifier correction). $\S\ref{sec:temporal}$ and $\S\ref{sec:three-group}$
+are refit with $\text{num\_docs}_n$ replaced by $\widehat{\text{num\_docs}}_n$.
+
+\textit{Use:} checks whether the temporal trend (\S\ref{sec:temporal}) and
+three-group findings (\S\ref{sec:three-group}) are an artifact of
+segmentation noise rather than classifier-type confusion. In this analysis
+both are essentially unchanged under correction.

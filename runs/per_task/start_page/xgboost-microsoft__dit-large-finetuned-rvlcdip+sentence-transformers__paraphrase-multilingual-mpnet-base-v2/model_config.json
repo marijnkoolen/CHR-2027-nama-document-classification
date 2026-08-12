@@ -1,0 +1,14 @@
+{
+  "model_family": "baseline",
+  "task": "start_page",
+  "algorithm": "xgboost",
+  "features": [
+    "microsoft/dit-large-finetuned-rvlcdip",
+    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+  ],
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

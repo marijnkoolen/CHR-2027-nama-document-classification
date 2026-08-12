@@ -1,0 +1,10 @@
+{
+  "model_family": "finetune_image",
+  "task": "start_page",
+  "backbone": "efficientnet_b0",
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "model_family": "fusion_early",
+  "task": "start_page",
+  "image_backbone": "efficientnet_b0",
+  "text_backbone": "bert-base-uncased",
+  "img_dim": 1280,
+  "text_dim": 768,
+  "hidden": 512,
+  "dropout": 0.3,
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

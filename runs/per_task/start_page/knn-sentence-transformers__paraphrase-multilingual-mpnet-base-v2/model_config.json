@@ -1,0 +1,13 @@
+{
+  "model_family": "baseline",
+  "task": "start_page",
+  "algorithm": "knn",
+  "features": [
+    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+  ],
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

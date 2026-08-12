@@ -1,0 +1,26 @@
+class	precision	recall	f1-score	support
+Approval notice	1.0	0.9333333333333333	0.9655172413793104	15.0
+D.1	1.0	1.0	1.0	18.0
+D.2	1.0	1.0	1.0	20.0
+DM.1	0.9411764705882353	1.0	0.9696969696969697	16.0
+Judicial and political backg…	0.8947368421052632	1.0	0.9444444444444444	17.0
+Letter about procedure	0.72	0.9473684210526315	0.8181818181818182	38.0
+NAA cover	1.0	1.0	1.0	9.0
+NAMA agreement	0.7857142857142857	1.0	0.88	11.0
+Other (Letter, Application D…	0.0	0.0	0.0	4.0
+Other (Letter, Other)	0.0	0.0	0.0	2.0
+Other (Other, Other)	0.0	0.0	0.0	4.0
+Other (Structured Form, Admi…	1.0	1.0	1.0	2.0
+Other (Structured Form, Appl…	0.4	0.3333333333333333	0.36363636363636365	12.0
+Other (Structured Form, Medi…	0.6666666666666666	0.8	0.7272727272727273	5.0
+Other (Structured Form, Othe…	0.0	0.0	0.0	7.0
+Other (Structured Form, Qual…	0.0	0.0	0.0	1.0
+Photo	1.0	1.0	1.0	14.0
+Registration card	0.7272727272727273	0.8888888888888888	0.8	9.0
+Report of selection and medi…	1.0	0.8181818181818182	0.9	11.0
+Testimonial labour (Qualific…	0.9245283018867925	0.98	0.9514563106796117	50.0
+Testimonial medical form (Me…	1.0	0.6666666666666666	0.8	9.0
+Testimonial medical letter (…	0.8148148148148148	0.88	0.8461538461538461	25.0
+Testimonial status (Applicat…	0.625	0.625	0.625	8.0
+macro avg	0.6739091351760341	0.6901205418024641	0.6778852052802214	307.0
+weighted avg	0.816116548311258	0.8599348534201955	0.8333909982740474	307.0

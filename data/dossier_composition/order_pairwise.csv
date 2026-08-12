@@ -1,0 +1,56 @@
+type_a,type_b,p_a_before_b_mean,p_a_before_b_hdi_3,p_a_before_b_hdi_97
+Approval notice,D.1,0.26229535359444733,0.2471208872158232,0.2793958412754004
+Approval notice,D.2,0.7766224593734309,0.7379343267200483,0.7941565728843251
+Approval notice,DM.1,0.5468385140199862,0.5041451204286742,0.5795954885571969
+Approval notice,Judicial and political background check,0.7529851224123846,0.7216513048966087,0.7696817578287602
+Approval notice,NAMA agreement,0.6669619111089834,0.6439380088890593,0.6876379497241403
+Approval notice,Registration card,0.6799850234525356,0.6505980362361209,0.6975405395371228
+Approval notice,Report of selection and medical officers,0.7481529465953576,0.7050747161923169,0.778107518325016
+Approval notice,Testimonial labour (Qualification & Employment Proof),0.7603176319969062,0.7085060450279207,0.7879027678835343
+Approval notice,Testimonial medical form (Medical & Health Documents),0.8525189659160415,0.8046609659850633,0.870258727661163
+Approval notice,Testimonial medical letter (Medical & Health Documents),0.7715405655381274,0.7489081928356363,0.7868450355564455
+D.1,D.2,0.9071618292938789,0.8883959607028892,0.9163005338932345
+D.1,DM.1,0.7721085394392023,0.7370791642170846,0.7976301762902734
+D.1,Judicial and political background check,0.8954872647606643,0.877720894582179,0.9048658176386507
+D.1,NAMA agreement,0.849207558968892,0.8353423066392262,0.8622752699764042
+D.1,Registration card,0.8566047725430868,0.8372399609729281,0.867829612047711
+D.1,Report of selection and medical officers,0.8929653313971572,0.8690129449679066,0.9086513832498502
+D.1,Testimonial labour (Qualification & Employment Proof),0.8989600450007722,0.8686489777029572,0.9139423511603885
+D.1,Testimonial medical form (Medical & Health Documents),0.9419634773206874,0.9195853024091258,0.9502192572885932
+D.1,Testimonial medical letter (Medical & Health Documents),0.9047248497782205,0.8925393536820517,0.9127344249209918
+D.2,DM.1,0.2578907904262586,0.22352069584844705,0.2974569805487595
+D.2,Judicial and political background check,0.4670570889130493,0.4262157462073326,0.5160582579677911
+D.2,NAMA agreement,0.36537720109481137,0.33964144060103457,0.4114855965176159
+D.2,Registration card,0.3792071183314293,0.35021333459801546,0.42465487006513986
+D.2,Report of selection and medical officers,0.4611824423961167,0.4067850918949984,0.519297020137866
+D.2,Testimonial labour (Qualification & Employment Proof),0.4775402471503125,0.4141181057670304,0.5301627141202732
+D.2,Testimonial medical form (Medical & Health Documents),0.624916814358819,0.5531691894848254,0.6753187348409028
+D.2,Testimonial medical letter (Medical & Health Documents),0.49253021499395916,0.45910662694508764,0.5370535081002034
+DM.1,Judicial and political background check,0.7161674507459641,0.6814039347149311,0.7506902452756256
+DM.1,NAMA agreement,0.6238314872401427,0.5882502049107556,0.662528676469296
+DM.1,Registration card,0.6376174700591867,0.6061421619142014,0.6745623542467859
+DM.1,Report of selection and medical officers,0.7109645779634679,0.6593166427546363,0.7575713954655121
+DM.1,Testimonial labour (Qualification & Employment Proof),0.7241957411896308,0.6684332034618722,0.7686126761789799
+DM.1,Testimonial medical form (Medical & Health Documents),0.8270785329023554,0.772598837385495,0.8572837959815235
+DM.1,Testimonial medical letter (Medical & Health Documents),0.7364543816105512,0.7035418206303973,0.7688475576316836
+Judicial and political background check,NAMA agreement,0.3964712571971437,0.3713848813870561,0.43530571332116086
+Judicial and political background check,Registration card,0.41071906959876675,0.3806009203448636,0.4470185533176331
+Judicial and political background check,Report of selection and medical officers,0.4940440198907032,0.44097650565421165,0.5403829834795023
+Judicial and political background check,Testimonial labour (Qualification & Employment Proof),0.5104580250637681,0.44121877512067237,0.5578827317659415
+Judicial and political background check,Testimonial medical form (Medical & Health Documents),0.6552706877785767,0.5740091193244724,0.6955474802408806
+Judicial and political background check,Testimonial medical letter (Medical & Health Documents),0.5255106380153498,0.49467532888286064,0.566504735791181
+NAMA agreement,Registration card,0.5148096837100139,0.4813721068503126,0.5381628899390978
+NAMA agreement,Report of selection and medical officers,0.5976507779217388,0.5431993455585965,0.635562634615475
+NAMA agreement,Testimonial labour (Qualification & Employment Proof),0.6132847842550349,0.5477821899139057,0.651674270977273
+NAMA agreement,Testimonial medical form (Medical & Health Documents),0.7430354044014763,0.6848692736895152,0.7728617201817964
+NAMA agreement,Testimonial medical letter (Medical & Health Documents),0.627726702987985,0.5986704814112878,0.6518830900438145
+Registration card,Report of selection and medical officers,0.5833272714215574,0.5283670762177889,0.6249955522447815
+Registration card,Testimonial labour (Qualification & Employment Proof),0.5992042992730824,0.5361364164804181,0.6379071619981334
+Registration card,Testimonial medical form (Medical & Health Documents),0.731563356975474,0.6600587782556697,0.7621236283272347
+Registration card,Testimonial medical letter (Medical & Health Documents),0.6137839325248446,0.5864349849918931,0.6408908191193313
+Report of selection and medical officers,Testimonial labour (Qualification & Employment Proof),0.5163764140574902,0.4466170133538491,0.5847117677646009
+Report of selection and medical officers,Testimonial medical form (Medical & Health Documents),0.6603473273345007,0.5875171932457182,0.7180474196626563
+Report of selection and medical officers,Testimonial medical letter (Medical & Health Documents),0.5314008534464756,0.49044616139179564,0.5880994174820632
+Testimonial labour (Qualification & Employment Proof),Testimonial medical form (Medical & Health Documents),0.6455820902808115,0.5745799624867806,0.7032040887268669
+Testimonial labour (Qualification & Employment Proof),Testimonial medical letter (Medical & Health Documents),0.5150245812850706,0.474559957944307,0.5772117856455986
+Testimonial medical form (Medical & Health Documents),Testimonial medical letter (Medical & Health Documents),0.3680859864933344,0.331333909161206,0.4399599292444229

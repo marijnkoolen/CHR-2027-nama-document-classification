@@ -1,0 +1,337 @@
+% Requires: \usepackage{booktabs, multirow, amssymb, longtable}
+
+\begin{table}[t]
+\centering
+\caption{Pretrained backbones. Vision inputs are resized to $224\times224$; text is truncated to 256 tokens.}
+\label{tab:backbones}
+\small
+\begin{tabular}{llrl}
+\toprule
+Backbone & Modality & Dim. & Source \\
+\midrule
+VGG16            & Vision & 512  & torchvision \\
+EfficientNet-B0  & Vision & 1280 & torchvision \\
+DINOv2-S         & Vision & 384  & \texttt{facebook/dinov2-small} \\
+DiT-Large        & Vision & 1024 & \texttt{microsoft/dit-large-finetuned-rvlcdip} \\
+BERT-base        & Text   & 768  & \texttt{bert-base-uncased} \\
+mpnet-multi      & Text   & 768  & \texttt{sentence-transformers/}\allowbreak\texttt{paraphrase-multilingual-mpnet-base-v2} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Baseline classifier hyperparameters.}
+\label{tab:baseline-hparams}
+\small
+\begin{tabular}{lll}
+\toprule
+Classifier & Parameter & Value \\
+\midrule
+\multirow{2}{*}{$k$-NN}
+ & distance metric & cosine \\
+ & $k$ & $\{3,5,7,11,15\}$, selected on val. \\
+\midrule
+\multirow{5}{*}{XGBoost}
+ & \# trees & 300 \\
+ & max depth & 6 \\
+ & learning rate & 0.05 \\
+ & subsample & 0.8 \\
+ & colsample\_bytree & 0.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Training regimes: how backbone features are turned into a prediction.}
+\label{tab:regimes}
+\small
+\begin{tabular}{llp{7cm}}
+\toprule
+Regime & Trainable component & Description \\
+\midrule
+Baseline & $k$-NN / XGBoost &
+  Frozen backbone feature(s) (single, or L2-normalised concatenation for multimodal) fed directly to a classical classifier. \\
+Sequence & BiLSTM (2$\times$256, dropout 0.3) &
+  A dossier's per-page frozen features modeled as a sequence: 512-d projection, bidirectional LSTM, page-level softmax head. \\
+Early fusion & MLP (512-512, dropout 0.3) &
+  Frozen image and text features separately projected to 512-d, concatenated, and passed through a 2-layer MLP head. \\
+Late fusion & None (derived) &
+  Softmax outputs of one independently fine-tuned vision model and one independently fine-tuned text model, averaged - no training or architecture of its own. \\
+Finetune & Backbone + linear head &
+  Backbone weights updated end-to-end (VGG16/EfficientNet-B0 use a fixed unfreeze policy; other backbones unfreeze the last 2 blocks/layers by default). \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Modality support by training regime.}
+\label{tab:modality-regime}
+\small
+\begin{tabular}{lccc}
+\toprule
+Regime & Text & Vision & Multimodal \\
+\midrule
+Baseline     & \checkmark & \checkmark & \checkmark \\
+Sequence     & \checkmark & \checkmark & -- \\
+Early fusion & --         & --         & \checkmark \\
+Late fusion  & --         & --         & \checkmark \\
+Finetune     & \checkmark & \checkmark & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ---- Test-set results ----
+
+% Requires: \usepackage{longtable, booktabs}
+
+\begin{longtable}{lrrrrrr}
+\caption{start\_page test-set results (338 pages: 238 start / 100 not-start), ranked by macro F1. P/R are macro-averaged (mean of both classes) - not the positive-class-only numbers sklearn's binary mode reports by default, which score an easier question and are not used anywhere in this paper. E.Fusion/L.Fusion = early/late fusion.} \label{tab:results-start-page} \\
+\toprule
+Model & P & R & Macro F1 & Weighted F1 & PQ & UAS \\
+\midrule
+\endfirsthead
+\multicolumn{7}{l}{\small\itshape (continued)} \\
+\toprule
+Model & P & R & Macro F1 & Weighted F1 & PQ & UAS \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+kNN (DINOv2-S+mpnet) & 0.958 & 0.949 & 0.953 & 0.961 & 0.947 & 0.959 \\
+LSTM (mpnet) & 0.953 & 0.947 & 0.950 & 0.959 & 0.934 & 0.941 \\
+LSTM (DINOv2-S) & 0.953 & 0.947 & 0.950 & 0.959 & 0.949 & 0.953 \\
+kNN (EffNet-B0+mpnet) & 0.958 & 0.942 & 0.949 & 0.958 & 0.935 & 0.953 \\
+LSTM (VGG16) & 0.933 & 0.961 & 0.945 & 0.953 & 0.925 & 0.935 \\
+LSTM (EffNet-B0) & 0.941 & 0.938 & 0.940 & 0.950 & 0.928 & 0.944 \\
+L.Fusion (DINOv2-S+BERT) & 0.949 & 0.929 & 0.938 & 0.949 & 0.938 & 0.944 \\
+L.Fusion (DINOv2-S+mpnet) & 0.949 & 0.929 & 0.938 & 0.949 & 0.937 & 0.944 \\
+kNN (DINOv2-S) & 0.936 & 0.936 & 0.936 & 0.947 & 0.929 & 0.944 \\
+kNN (EffNet-B0) & 0.943 & 0.927 & 0.935 & 0.946 & 0.938 & 0.938 \\
+kNN (DINOv2-S+BERT) & 0.943 & 0.927 & 0.935 & 0.946 & 0.928 & 0.944 \\
+kNN (EffNet-B0+BERT) & 0.946 & 0.924 & 0.934 & 0.946 & 0.928 & 0.944 \\
+FT (DINOv2-S) & 0.938 & 0.925 & 0.931 & 0.943 & 0.925 & 0.935 \\
+E.Fusion (DINOv2-S+mpnet) & 0.936 & 0.920 & 0.928 & 0.940 & 0.922 & 0.938 \\
+E.Fusion (EffNet-B0+mpnet) & 0.931 & 0.918 & 0.924 & 0.937 & 0.919 & 0.929 \\
+E.Fusion (DINOv2-S+BERT) & 0.926 & 0.916 & 0.921 & 0.934 & 0.916 & 0.929 \\
+L.Fusion (VGG16+BERT) & 0.938 & 0.904 & 0.919 & 0.934 & 0.915 & 0.920 \\
+L.Fusion (VGG16+mpnet) & 0.932 & 0.902 & 0.915 & 0.931 & 0.905 & 0.917 \\
+XGB (DINOv2-S) & 0.917 & 0.912 & 0.914 & 0.929 & 0.897 & 0.923 \\
+FT (EffNet-B0) & 0.906 & 0.921 & 0.913 & 0.927 & 0.888 & 0.914 \\
+L.Fusion (EffNet-B0+BERT) & 0.930 & 0.897 & 0.912 & 0.928 & 0.908 & 0.908 \\
+L.Fusion (DiT-L+BERT) & 0.930 & 0.897 & 0.912 & 0.928 & 0.908 & 0.908 \\
+BERT-FT (BERT) & 0.930 & 0.897 & 0.912 & 0.928 & 0.908 & 0.908 \\
+FT (VGG16) & 0.917 & 0.904 & 0.910 & 0.925 & 0.899 & 0.908 \\
+E.Fusion (EffNet-B0+BERT) & 0.917 & 0.904 & 0.910 & 0.925 & 0.902 & 0.917 \\
+L.Fusion (EffNet-B0+mpnet) & 0.925 & 0.895 & 0.908 & 0.925 & 0.901 & 0.911 \\
+kNN (BERT) & 0.928 & 0.892 & 0.908 & 0.924 & 0.797 & 0.914 \\
+E.Fusion (VGG16+mpnet) & 0.912 & 0.902 & 0.907 & 0.923 & 0.887 & 0.905 \\
+kNN (VGG16+mpnet) & 0.929 & 0.884 & 0.903 & 0.921 & 0.894 & 0.917 \\
+E.Fusion (DiT-L+mpnet) & 0.895 & 0.912 & 0.903 & 0.918 & 0.891 & 0.888 \\
+XGB (DINOv2-S+BERT) & 0.917 & 0.888 & 0.901 & 0.919 & 0.897 & 0.914 \\
+XGB (DiT-L+mpnet) & 0.920 & 0.885 & 0.900 & 0.918 & 0.883 & 0.905 \\
+kNN (VGG16+BERT) & 0.920 & 0.885 & 0.900 & 0.918 & 0.899 & 0.908 \\
+kNN (DiT-L+mpnet) & 0.904 & 0.895 & 0.899 & 0.917 & 0.895 & 0.896 \\
+E.Fusion (VGG16+BERT) & 0.909 & 0.889 & 0.898 & 0.916 & 0.887 & 0.896 \\
+XGB (EffNet-B0+mpnet) & 0.909 & 0.889 & 0.898 & 0.916 & 0.899 & 0.888 \\
+XGB (EffNet-B0+BERT) & 0.909 & 0.889 & 0.898 & 0.916 & 0.888 & 0.905 \\
+XGB (DINOv2-S+mpnet) & 0.912 & 0.886 & 0.897 & 0.916 & 0.892 & 0.908 \\
+BERT-FT (mpnet) & 0.912 & 0.886 & 0.897 & 0.916 & 0.790 & 0.899 \\
+LSTM (BERT) & 0.907 & 0.884 & 0.894 & 0.913 & 0.778 & 0.902 \\
+L.Fusion (DiT-L+mpnet) & 0.909 & 0.881 & 0.893 & 0.913 & 0.788 & 0.899 \\
+LSTM (DiT-L) & 0.885 & 0.900 & 0.892 & 0.909 & 0.760 & 0.888 \\
+E.Fusion (DiT-L+BERT) & 0.889 & 0.891 & 0.890 & 0.908 & 0.866 & 0.879 \\
+kNN (VGG16) & 0.907 & 0.876 & 0.889 & 0.909 & 0.883 & 0.902 \\
+XGB (VGG16+mpnet) & 0.907 & 0.876 & 0.889 & 0.909 & 0.883 & 0.885 \\
+XGB (EffNet-B0) & 0.895 & 0.883 & 0.888 & 0.908 & 0.873 & 0.888 \\
+XGB (mpnet) & 0.897 & 0.864 & 0.878 & 0.900 & 0.865 & 0.876 \\
+XGB (VGG16+BERT) & 0.897 & 0.864 & 0.878 & 0.900 & 0.776 & 0.885 \\
+kNN (mpnet) & 0.903 & 0.858 & 0.876 & 0.899 & 0.866 & 0.891 \\
+XGB (DiT-L+BERT) & 0.884 & 0.863 & 0.872 & 0.895 & 0.758 & 0.885 \\
+kNN (DiT-L+BERT) & 0.889 & 0.857 & 0.871 & 0.894 & 0.825 & 0.879 \\
+XGB (DiT-L) & 0.867 & 0.873 & 0.870 & 0.891 & 0.842 & 0.861 \\
+XGB (VGG16) & 0.877 & 0.856 & 0.865 & 0.889 & 0.848 & 0.867 \\
+XGB (BERT) & 0.876 & 0.840 & 0.855 & 0.882 & 0.736 & 0.873 \\
+kNN (DiT-L) & 0.816 & 0.769 & 0.786 & 0.828 & 0.730 & 0.814 \\
+FT (DiT-L) & 0.679 & 0.675 & 0.677 & 0.732 & 0.611 & 0.701 \\
+\end{longtable}
+
+\begin{longtable}{lrrrr}
+\caption{document\_type test-set results (307 start pages), ranked by macro F1. P/R are macro-averaged; E.Fusion/L.Fusion = early/late fusion.} \label{tab:results-doc-type} \\
+\toprule
+Model & Macro P & Macro R & Macro F1 & Weighted F1 \\
+\midrule
+\endfirsthead
+\multicolumn{5}{l}{\small\itshape (continued)} \\
+\toprule
+Model & Macro P & Macro R & Macro F1 & Weighted F1 \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+E.Fusion (DiT-L+mpnet) & 0.745 & 0.745 & 0.730 & 0.826 \\
+L.Fusion (EffNet-B0+BERT) & 0.725 & 0.743 & 0.730 & 0.841 \\
+L.Fusion (DiT-L+BERT) & 0.708 & 0.735 & 0.715 & 0.836 \\
+BERT-FT (BERT) & 0.707 & 0.735 & 0.714 & 0.836 \\
+E.Fusion (EffNet-B0+BERT) & 0.690 & 0.729 & 0.704 & 0.788 \\
+E.Fusion (VGG16+mpnet) & 0.679 & 0.701 & 0.682 & 0.828 \\
+L.Fusion (VGG16+BERT) & 0.674 & 0.690 & 0.678 & 0.833 \\
+L.Fusion (DINOv2-S+BERT) & 0.664 & 0.694 & 0.673 & 0.828 \\
+E.Fusion (DINOv2-S+mpnet) & 0.654 & 0.696 & 0.665 & 0.797 \\
+BERT-FT (mpnet) & 0.665 & 0.677 & 0.662 & 0.822 \\
+E.Fusion (DiT-L+BERT) & 0.659 & 0.696 & 0.661 & 0.770 \\
+E.Fusion (EffNet-B0+mpnet) & 0.667 & 0.708 & 0.655 & 0.793 \\
+L.Fusion (DiT-L+mpnet) & 0.658 & 0.671 & 0.654 & 0.814 \\
+XGB (DINOv2-S+mpnet) & 0.664 & 0.657 & 0.652 & 0.790 \\
+XGB (mpnet) & 0.671 & 0.654 & 0.650 & 0.788 \\
+XGB (EffNet-B0+mpnet) & 0.676 & 0.654 & 0.647 & 0.779 \\
+E.Fusion (VGG16+BERT) & 0.619 & 0.680 & 0.642 & 0.804 \\
+L.Fusion (EffNet-B0+mpnet) & 0.631 & 0.677 & 0.637 & 0.810 \\
+XGB (DiT-L+BERT) & 0.662 & 0.649 & 0.636 & 0.783 \\
+XGB (EffNet-B0+BERT) & 0.657 & 0.648 & 0.635 & 0.783 \\
+L.Fusion (VGG16+mpnet) & 0.646 & 0.654 & 0.633 & 0.786 \\
+XGB (DiT-L+mpnet) & 0.622 & 0.646 & 0.627 & 0.770 \\
+XGB (VGG16+mpnet) & 0.658 & 0.643 & 0.627 & 0.771 \\
+E.Fusion (DINOv2-S+BERT) & 0.617 & 0.665 & 0.622 & 0.708 \\
+XGB (DINOv2-S+BERT) & 0.611 & 0.642 & 0.616 & 0.785 \\
+XGB (VGG16+BERT) & 0.620 & 0.633 & 0.613 & 0.784 \\
+XGB (BERT) & 0.625 & 0.621 & 0.612 & 0.782 \\
+kNN (BERT) & 0.628 & 0.635 & 0.603 & 0.746 \\
+kNN (mpnet) & 0.575 & 0.631 & 0.599 & 0.772 \\
+L.Fusion (DINOv2-S+mpnet) & 0.612 & 0.615 & 0.598 & 0.759 \\
+kNN (EffNet-B0+mpnet) & 0.606 & 0.618 & 0.596 & 0.735 \\
+kNN (VGG16+mpnet) & 0.594 & 0.616 & 0.593 & 0.743 \\
+kNN (DINOv2-S+mpnet) & 0.617 & 0.609 & 0.586 & 0.731 \\
+FT (DINOv2-S) & 0.550 & 0.570 & 0.553 & 0.681 \\
+FT (VGG16) & 0.587 & 0.565 & 0.552 & 0.639 \\
+LSTM (mpnet) & 0.538 & 0.569 & 0.545 & 0.720 \\
+FT (EffNet-B0) & 0.529 & 0.579 & 0.532 & 0.643 \\
+kNN (VGG16+BERT) & 0.573 & 0.556 & 0.529 & 0.657 \\
+kNN (DiT-L+mpnet) & 0.549 & 0.558 & 0.527 & 0.681 \\
+kNN (EffNet-B0+BERT) & 0.574 & 0.551 & 0.524 & 0.626 \\
+LSTM (DINOv2-S) & 0.495 & 0.545 & 0.514 & 0.671 \\
+LSTM (EffNet-B0) & 0.490 & 0.506 & 0.491 & 0.622 \\
+XGB (DiT-L) & 0.488 & 0.519 & 0.490 & 0.601 \\
+XGB (DINOv2-S) & 0.481 & 0.511 & 0.482 & 0.592 \\
+kNN (VGG16) & 0.479 & 0.516 & 0.482 & 0.563 \\
+LSTM (BERT) & 0.469 & 0.514 & 0.482 & 0.678 \\
+kNN (DINOv2-S+BERT) & 0.504 & 0.522 & 0.477 & 0.614 \\
+XGB (EffNet-B0) & 0.500 & 0.501 & 0.472 & 0.585 \\
+kNN (DiT-L+BERT) & 0.488 & 0.506 & 0.468 & 0.581 \\
+kNN (EffNet-B0) & 0.467 & 0.498 & 0.466 & 0.555 \\
+XGB (VGG16) & 0.444 & 0.485 & 0.453 & 0.562 \\
+LSTM (DiT-L) & 0.418 & 0.433 & 0.412 & 0.513 \\
+kNN (DINOv2-S) & 0.387 & 0.471 & 0.412 & 0.514 \\
+LSTM (VGG16) & 0.371 & 0.433 & 0.392 & 0.514 \\
+kNN (DiT-L) & 0.349 & 0.385 & 0.341 & 0.449 \\
+FT (DiT-L) & 0.223 & 0.295 & 0.231 & 0.273 \\
+\end{longtable}
+
+\footnotesize
+\begin{longtable}{llrrrrr}
+\caption{All start\_page $\times$ doc\_type pipeline combinations tested: the 3 top standalone start\_page models $\times$ 5 doc\_type models (the 3 top standalone doc\_type models, plus the 2 late-fusion doc\_type models competitive enough standalone (Table~\ref{tab:results-doc-type}) to be worth checking end-to-end (a model that is merely competitive standalone can still turn out to be the best pipeline choice - see the discussion around Table~\ref{tab:results-pipeline-perclass}). Start F1 and doc Macro F1 are both macro-averaged (both classes / all classes) and end-to-end - the number directly comparable to Tables~\ref{tab:results-start-page}/\ref{tab:results-doc-type}. Positive-class-only start F1 and document\_type accuracy/F1 conditional on start\_page detection succeeding are deliberately not reported anywhere in this paper: both silently score an easier, differently-scoped question than the real inference task and are not valid inputs for downstream document-count corrections. Ranked by LAS.} \label{tab:pipeline-combinations} \\
+\toprule
+start\_page model & doc\_type model & \rotatebox{60}{start Macro F1} & \rotatebox{60}{doc Macro F1} & \rotatebox{60}{PQ} & \rotatebox{60}{UAS} & \rotatebox{60}{LAS} \\
+\midrule
+\endfirsthead
+\multicolumn{7}{l}{\footnotesize\itshape (continued)} \\
+\toprule
+start\_page model & doc\_type model & \rotatebox{60}{start Macro F1} & \rotatebox{60}{doc Macro F1} & \rotatebox{60}{PQ} & \rotatebox{60}{UAS} & \rotatebox{60}{LAS} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+kNN (DINOv2-S+mpnet) & L.Fusion (EffNet-B0+BERT) & 0.953 & 0.796 & 0.947 & 0.959 & 0.953 \\
+kNN (DINOv2-S+mpnet) & BERT-FT (BERT) & 0.953 & 0.785 & 0.947 & 0.959 & 0.950 \\
+kNN (DINOv2-S+mpnet) & L.Fusion (DiT-L+BERT) & 0.953 & 0.785 & 0.947 & 0.959 & 0.950 \\
+LSTM (DINOv2-S) & L.Fusion (EffNet-B0+BERT) & 0.950 & 0.748 & 0.949 & 0.953 & 0.941 \\
+LSTM (DINOv2-S) & BERT-FT (BERT) & 0.950 & 0.737 & 0.949 & 0.953 & 0.938 \\
+LSTM (DINOv2-S) & L.Fusion (DiT-L+BERT) & 0.950 & 0.737 & 0.949 & 0.953 & 0.938 \\
+LSTM (mpnet) & L.Fusion (EffNet-B0+BERT) & 0.950 & 0.757 & 0.934 & 0.941 & 0.935 \\
+LSTM (mpnet) & BERT-FT (BERT) & 0.950 & 0.746 & 0.934 & 0.941 & 0.932 \\
+LSTM (mpnet) & L.Fusion (DiT-L+BERT) & 0.950 & 0.746 & 0.934 & 0.941 & 0.932 \\
+kNN (DINOv2-S+mpnet) & E.Fusion (DiT-L+mpnet) & 0.953 & 0.743 & 0.947 & 0.959 & 0.929 \\
+kNN (DINOv2-S+mpnet) & E.Fusion (EffNet-B0+BERT) & 0.953 & 0.759 & 0.947 & 0.959 & 0.923 \\
+LSTM (DINOv2-S) & E.Fusion (DiT-L+mpnet) & 0.950 & 0.691 & 0.949 & 0.953 & 0.917 \\
+LSTM (DINOv2-S) & E.Fusion (EffNet-B0+BERT) & 0.950 & 0.723 & 0.949 & 0.953 & 0.914 \\
+LSTM (mpnet) & E.Fusion (DiT-L+mpnet) & 0.950 & 0.704 & 0.934 & 0.941 & 0.911 \\
+LSTM (mpnet) & E.Fusion (EffNet-B0+BERT) & 0.950 & 0.720 & 0.934 & 0.941 & 0.905 \\
+\end{longtable}
+
+\footnotesize
+\begin{longtable}{p{6.5cm}rrr}
+\caption{Per-class F1 (document\_type) for the three standalone doc\_type models originally paired in the pipeline sweep (Table~\ref{tab:pipeline-combinations}), before the two late-fusion candidates were added.} \label{tab:results-doc-type-perclass} \\
+\toprule
+Class & \rotatebox{60}{E.Fusion (DiT-L+mpnet)} & \rotatebox{60}{BERT-FT (BERT)} & \rotatebox{60}{E.Fusion (EffNet-B0+BERT)} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\small\itshape (continued)} \\
+\toprule
+Class & \rotatebox{60}{E.Fusion (DiT-L+mpnet)} & \rotatebox{60}{BERT-FT (BERT)} & \rotatebox{60}{E.Fusion (EffNet-B0+BERT)} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Approval notice & 0.903 & 0.929 & 0.875 \\
+D.1 & 1.000 & 1.000 & 1.000 \\
+D.2 & 1.000 & 1.000 & 1.000 \\
+DM.1 & 1.000 & 1.000 & 0.941 \\
+Judicial and political background check & 0.971 & 0.944 & 0.919 \\
+Letter about procedure & 0.729 & 0.809 & 0.676 \\
+NAA cover & 1.000 & 1.000 & 1.000 \\
+NAMA agreement & 0.917 & 0.917 & 0.846 \\
+Other (Letter, Application Documents) & 0.400 & 0.000 & 0.000 \\
+Other (Letter, Other) & 0.000 & 0.000 & 0.000 \\
+Other (Other, Other) & 0.000 & 0.000 & 0.000 \\
+Other (Structured Form, Administrative \& Internal Processing Documents) & 1.000 & 0.800 & 1.000 \\
+Other (Structured Form, Application Documents) & 0.286 & 0.381 & 0.476 \\
+Other (Structured Form, Medical \& Health Documents) & 0.833 & 0.833 & 0.833 \\
+Other (Structured Form, Other) & 0.000 & 0.000 & 0.000 \\
+Other (Structured Form, Qualification \& Employment Proof) & 1.000 & 1.000 & 1.000 \\
+Photo & 1.000 & 1.000 & 1.000 \\
+Registration card & 0.857 & 0.778 & 0.947 \\
+Report of selection and medical officers & 0.833 & 0.900 & 0.870 \\
+Testimonial labour (Qualification \& Employment Proof) & 0.948 & 0.961 & 0.854 \\
+Testimonial medical form (Medical \& Health Documents) & 0.800 & 0.800 & 0.750 \\
+Testimonial medical letter (Medical \& Health Documents) & 0.846 & 0.846 & 0.710 \\
+Testimonial status (Application Documents) & 0.471 & 0.526 & 0.500 \\
+\bottomrule
+\end{longtable}
+
+\footnotesize
+\begin{longtable}{p{6.5cm}rrr}
+\caption{Per-class F1 (document\_type) for the top-3 (by LAS) pipeline combinations - the honest, end-to-end reading (every true start page, a start\_page miss counts as wrong), not the standalone doc\_type models' own numbers in Table~\ref{tab:results-doc-type-perclass}. All three pair with kNN(DINOv2-S+mpnet) as the start\_page model; only the doc\_type model varies - late fusion (EffNet-B0+BERT) is the overall best pipeline combination (Table~\ref{tab:pipeline-combinations}), despite not leading Table~\ref{tab:results-doc-type} outright.} \label{tab:results-pipeline-perclass} \\
+\toprule
+Class & \rotatebox{60}{L.Fusion (EffNet-B0+BERT)} & \rotatebox{60}{BERT-FT (BERT)} & \rotatebox{60}{L.Fusion (DiT-L+BERT)} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\small\itshape (continued)} \\
+\toprule
+Class & \rotatebox{60}{L.Fusion (EffNet-B0+BERT)} & \rotatebox{60}{BERT-FT (BERT)} & \rotatebox{60}{L.Fusion (DiT-L+BERT)} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Approval notice & 1.000 & 1.000 & 1.000 \\
+D.1 & 1.000 & 1.000 & 1.000 \\
+D.2 & 1.000 & 1.000 & 1.000 \\
+DM.1 & 0.973 & 0.973 & 0.973 \\
+Judicial and political background check & 1.000 & 1.000 & 1.000 \\
+Letter about procedure & 0.929 & 0.929 & 0.929 \\
+NAA cover & 1.000 & 1.000 & 1.000 \\
+NAMA agreement & 1.000 & 1.000 & 1.000 \\
+Other (Letter, Other) & 1.000 & 1.000 & 1.000 \\
+Other (Structured Form, Administrative \& Internal Processing Documents) & 1.000 & 1.000 & 1.000 \\
+Other (Structured Form, Medical \& Health Documents) & 1.000 & 0.857 & 0.857 \\
+Other (Structured Form, Qualification \& Employment Proof) & 0.667 & 0.667 & 0.667 \\
+Photo & 1.000 & 1.000 & 1.000 \\
+Registration card & 0.923 & 0.923 & 0.923 \\
+Report of selection and medical officers & 0.833 & 0.833 & 0.833 \\
+Testimonial labour (Qualification \& Employment Proof) & 0.990 & 0.990 & 0.990 \\
+Testimonial medical form (Medical \& Health Documents) & 1.000 & 0.889 & 0.889 \\
+Testimonial medical letter (Medical \& Health Documents) & 1.000 & 1.000 & 1.000 \\
+Testimonial status (Application Documents) & 1.000 & 1.000 & 1.000 \\
+\bottomrule
+\end{longtable}

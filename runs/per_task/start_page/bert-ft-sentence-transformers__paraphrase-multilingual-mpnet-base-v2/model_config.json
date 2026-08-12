@@ -1,0 +1,12 @@
+{
+  "model_family": "finetune_text",
+  "task": "start_page",
+  "backbone": "bert",
+  "bert_model": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+  "max_text_length": 256,
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "model_family": "finetune_image",
+  "task": "start_page",
+  "backbone": "facebook/dinov2-small",
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "model_family": "late_fusion",
+  "task": "start_page",
+  "vision_model": "vgg16-ft",
+  "text_model": "bert-ft-bert-base-uncased",
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}

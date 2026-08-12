@@ -1,0 +1,48 @@
+# Full dependency closure pinned to the exact versions verified working
+# together locally (Python 3.11, PyMC's default PyTensor/C backend) --
+# NOT just pymc/arviz/pytensor. First attempt at this file only pinned
+# those three and left matplotlib (and everything else) to resolve
+# freely; pip grabbed a matplotlib new enough to have dropped/moved the
+# internal `matplotlib.style.core` module that arviz 0.20.0 reaches into,
+# producing `AttributeError: module 'matplotlib.style' has no attribute
+# 'core'`. One partial pin just traded one mismatch for another -- pinning
+# the whole closure this time so we're not doing this a third time.
+#
+#   uv venv --python 3.13 .venv   # or whatever Python you've already set up
+#   uv run pip install -r scripts/dossier_composition/requirements-gpu.txt
+#
+# jax[cuda12] pulls prebuilt CUDA wheels -- confirm the box's CUDA driver
+# version supports CUDA 12 first (`nvidia-smi` top-right corner) before
+# installing; swap to a matching jax[cudaXX] extra otherwise.
+#
+# If uv/pip can't find a Python-3.13 wheel for one of these exact pins,
+# that's a real signal (not just "try again") -- report back which
+# package/version before loosening it, since these were chosen specifically
+# to avoid the two mismatches already hit.
+
+pymc==5.28.5
+arviz==0.20.0
+pytensor==2.38.3
+numpy==2.4.6
+pandas==2.3.1
+scipy==1.17.1
+matplotlib==3.10.8
+xarray==2025.1.2
+xarray-einstats==0.8.0
+h5netcdf==1.5.0
+numba==0.65.1
+llvmlite==0.47.0
+cachetools==5.5.0
+cloudpickle==2.2.1
+rich==13.9.4
+threadpoolctl==3.2.0
+typing_extensions==4.15.0
+packaging==24.2
+
+# GPU sampling backend (PyMC's nuts_sampler="numpyro") -- without these,
+# pm.sample() runs on CPU only regardless of what hardware is available.
+# Not present in the local environment, so no known-good pin to match --
+# if these produce their own version conflicts, that's new information,
+# not a repeat of the first two issues.
+numpyro
+jax[cuda12]

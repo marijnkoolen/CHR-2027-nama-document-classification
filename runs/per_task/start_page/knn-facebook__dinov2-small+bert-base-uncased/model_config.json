@@ -1,0 +1,14 @@
+{
+  "model_family": "baseline",
+  "task": "start_page",
+  "algorithm": "knn",
+  "features": [
+    "facebook/dinov2-small",
+    "bert-base-uncased"
+  ],
+  "num_classes": 2,
+  "class_names": [
+    "not-start",
+    "start"
+  ]
+}
