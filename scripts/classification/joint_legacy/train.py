@@ -1,0 +1,1296 @@
+"""
+Single entry point for training any combination of:
+
+    --scenario  {efficient, quality}     backbone size / hyperparameter preset
+    --mode      {page, sequence}         per-page classification vs whole-PDF sequence context
+    --modality  {vision, multimodal}     image-only vs image + PageXML text
+    --target    document_type | layout_type | functional_category | start_page
+                    page mode: exactly one - the column to classify.
+                    sequence mode: one or more (default: all four) - which
+                    head(s) determine the saved "best" checkpoint and get
+                    top billing in the printed summary. All four heads are
+                    always trained together in sequence mode regardless of
+                    --target, because start-page detection is what document
+                    segmentation (and therefore the type/layout/functional
+                    heads) is built on - dropping it would break them, not
+                    just skip reporting it.
+
+Replaces train_efficient.py, train_quality.py, train_multimodal.py and
+train_sequence.py, which each covered one corner of this space. The
+underlying building blocks are unchanged - this only wires them together
+behind one CLI: common.py and multimodal_data.py for page-mode data/loaders,
+sequence_data.py/sequence_model.py for sequence mode, models.py for the
+backbones (PageEmbedder/MultimodalPageEmbedder/BackboneClassifier/
+MultimodalBackboneClassifier).
+
+Examples:
+    # efficient, single page, vision-only, document type
+    python scripts/classification/train.py --manifest data/dummy_sequences/manifest.tsv \\
+        --scenario efficient --mode page --modality vision --target document_type
+
+    # quality, whole-PDF sequence context, image+text, best checkpoint
+    # tracked on start-page + document-type
+    python scripts/classification/train.py --manifest data/dummy_sequences/manifest.tsv \\
+        --scenario quality --mode sequence --modality multimodal \\
+        --target start_page document_type
+
+Any hyperparameter flag (--image-backbone, --batch-size, --epochs, ...) can
+still be set explicitly to override the --scenario preset for just that one
+value.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_fscore_support
+from torch.utils.data import DataLoader
+from torchvision.datasets.folder import default_loader
+from transformers import AutoConfig, AutoTokenizer
+
+# The shared library modules (common.py, models.py, etc.) live in lib/, a
+# subdirectory of this script's own directory rather than an installed
+# package - add it to sys.path so they can be imported by plain name.
+sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+
+from common import (
+    build_transforms,
+    format_confusion_matrix,
+    get_text_extractor,
+    pick_device,
+    validate_manifest_paths,
+)
+from manifest_data import build_dataloaders_from_manifest
+from models import (
+    BackboneClassifier,
+    MultimodalBackboneClassifier,
+    MultimodalPageEmbedder,
+    TextBackboneClassifier,
+    TextEmbedder,
+    build_image_embedder,
+    trainable_parameter_summary,
+)
+from multimodal_data import build_multimodal_dataloaders
+from sequence_data import IGNORE_INDEX, PageBudgetBatchSampler, PageSequenceDataset, build_label_vocab, make_pdf_collate_fn
+from sequence_model import SequenceContextModel
+from text_data import build_text_dataloaders
+from recompose_sequences import recompose_documents
+from train_from_embeddings import EmbeddingSequenceDataset
+from train_from_embeddings import collate as collate_cached_embeddings
+from train_from_embeddings import compute_losses as compute_losses_cached_embeddings
+from train_sequence_from_embeddings import ProjectedSequenceModel
+from train_sequence_from_embeddings import evaluate as evaluate_cached_embeddings
+
+TARGET_COLUMN_ARG = {
+    "document_type": "doctype_col",
+    "layout_type": "layout_col",
+    "functional_category": "functional_col",
+    "start_page": "start_col",
+}
+TARGET_METRIC_KEY = {
+    "start_page": "start_f1",
+    "document_type": "doctype_macro_f1",
+    "layout_type": "layout_macro_f1",
+    "functional_category": "functional_macro_f1",
+}
+
+PRESETS = {
+    "efficient": dict(
+        image_backbone="facebook/dinov2-small", text_backbone="bert-base-uncased",
+        unfreeze_image_blocks=2, unfreeze_text_layers=2, image_size=224, batch_size=32,
+        epochs=15, lr=1e-3, lr_backbone=1e-4, lr_head=1e-3, augment_strength="moderate",
+        max_text_length=256, tta_views=0, n_heads=4, n_layers=2,
+    ),
+    "quality": dict(
+        image_backbone="microsoft/dit-large-finetuned-rvlcdip", text_backbone="bert-base-uncased",
+        unfreeze_image_blocks=1000, unfreeze_text_layers=1000, image_size=336, batch_size=8,
+        epochs=30, lr=2e-5, lr_backbone=2e-5, lr_head=1e-3, augment_strength="strong",
+        max_text_length=256, tta_views=5, n_heads=8, n_layers=4,
+    ),
+}
+
+# Sequence mode co-trains the backbone with a from-scratch Transformer +
+# four heads; on a modest amount of data (a few dozen PDFs) that's a
+# harder, higher-variance optimization problem than fine-tuning helps with -
+# confirmed empirically (frozen backbone scored substantially higher on all
+# four heads than 2 unfrozen blocks, holding everything else, including the
+# per-group gradient clipping fix, constant). Page mode's plain linear head
+# doesn't have this joint-optimization issue, so its defaults are untouched.
+SEQUENCE_MODE_OVERRIDES = {
+    # project_to=384 applies regardless of scenario/modality: a raw embed_dim
+    # much above ~384 overparameterizes SequenceContextModel's heads against
+    # a PDF-level training set this small - confirmed directly and repeatedly
+    # (DiT-large alone at 1024-dim, and multimodal combinations well above
+    # 384 - e.g. efficient's own dinov2-small+bert-base-uncased is
+    # 384+768=1152-dim - all collapsed to majority-class prediction without
+    # this, and stopped collapsing once projected down to 384). Only
+    # vision-only efficient (dinov2-small, already exactly 384-dim) doesn't
+    # strictly need it, but projecting 384->384 is a no-op in size and safe
+    # to apply uniformly rather than special-casing modality here.
+    "efficient": dict(project_to=384, unfreeze_image_blocks=0, unfreeze_text_layers=0),
+    # Frozen backbone by default too, same reasoning as efficient above plus
+    # a practical one: full-unfreezing a 304M-param backbone is what caused
+    # the original A10 OOM in sequence mode, independent of the
+    # dimensionality issue - the project_to fix doesn't remove that cost,
+    # since it sits after the backbone, not inside it.
+    "quality": dict(project_to=384, unfreeze_image_blocks=0, unfreeze_text_layers=0),
+}
+
+
+# --------------------------------------------------------------------------
+# Shared helpers
+# --------------------------------------------------------------------------
+
+def differential_param_groups(embedder_params, other_params, args) -> list[dict]:
+    """embedder (backbone) params get a lower lr than the head/other params
+    for the quality scenario (full fine-tune needs a gentler backbone lr);
+    efficient uses one flat lr for both, expressed as the same value twice
+    so this code path doesn't need a separate branch."""
+    lr_backbone = args.lr_backbone if args.scenario == "quality" else args.lr
+    lr_head = args.lr_head if args.scenario == "quality" else args.lr
+    groups = [
+        {"params": [p for p in embedder_params if p.requires_grad], "lr": lr_backbone},
+        {"params": [p for p in other_params if p.requires_grad], "lr": lr_head},
+    ]
+    return [g for g in groups if g["params"]]
+
+
+def clip_grad_norm_per_group(optimizer: torch.optim.Optimizer, max_norm: float = 1.0) -> None:
+    """Clips each optimizer param group's gradients to its own max_norm,
+    rather than one combined norm across all groups together. The backbone
+    (pretrained, only partially unfrozen) and the head/sequence-context
+    model (randomly initialized, learning from scratch) can have very
+    different gradient-norm scales; a single shared clip lets whichever
+    group has the larger norm dictate the scaling factor applied to *both*,
+    which can silently starve the smaller-normed group of most of its
+    update - exactly the kind of thing that looks like "it never learns
+    anything" without ever raising an error."""
+    for group in optimizer.param_groups:
+        if group["params"]:
+            torch.nn.utils.clip_grad_norm_(group["params"], max_norm=max_norm)
+
+
+def class_weights_from_samples(samples, num_classes: int) -> torch.Tensor:
+    counts = Counter(label for *_, label in samples)
+    freq = torch.tensor([counts.get(i, 1) for i in range(num_classes)], dtype=torch.float)
+    return freq.sum() / (num_classes * freq)
+
+
+def resolve_text_col(args) -> str:
+    """Which manifest column holds the path, for whichever --text-source
+    was chosen - common.get_text_extractor resolves the extractor function
+    itself; this resolves the companion column name (pagexml and markdown
+    OCR output live in separate manifest columns, since a page can have both)."""
+    return args.markdown_col if args.text_source == "markdown" else args.pagexml_col
+
+
+def resolve_amp(args, device: torch.device) -> bool:
+    """bf16 autocast, not fp16: on Ampere+ (A10 included) bf16 has the same
+    exponent range as fp32, so there's no overflow/GradScaler machinery
+    needed - it's a straightforward memory/speed win. --amp auto only
+    enables it on CUDA, where this is well-supported and tested; MPS/CPU
+    autocast coverage is patchier, so those stay off unless forced with
+    --amp on."""
+    if args.amp == "on":
+        return True
+    if args.amp == "off":
+        return False
+    return device.type == "cuda"
+
+
+def autocast_context(device: torch.device, enabled: bool):
+    return torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=enabled)
+
+
+def _classification_metrics(preds: list[int], targets: list[int], classes: list[str]) -> dict:
+    accuracy = sum(p == t for p, t in zip(preds, targets)) / max(1, len(targets))
+    # labels=range(len(classes)): average over the full trained vocabulary,
+    # not just whatever subset of classes happens to appear in this split -
+    # see evaluate_sequence's identical fix for why this matters.
+    macro_f1 = f1_score(targets, preds, average="macro", zero_division=0, labels=list(range(len(classes))))
+    report = classification_report(
+        targets, preds, labels=list(range(len(classes))), target_names=classes, zero_division=0
+    )
+    cm = confusion_matrix(targets, preds, labels=list(range(len(classes)))).tolist()
+    return {"accuracy": accuracy, "macro_f1": macro_f1, "report": report, "confusion_matrix": cm}
+
+
+# --------------------------------------------------------------------------
+# Page mode (train_efficient.py / train_quality.py / train_multimodal.py)
+# --------------------------------------------------------------------------
+
+def make_vision_forward(model, device):
+    def forward(batch):
+        images, targets = batch
+        return model(images.to(device)), targets.to(device)
+    return forward
+
+
+def make_multimodal_forward(model, device):
+    def forward(batch):
+        images, input_ids, attention_mask, targets = batch
+        logits = model(images.to(device), input_ids.to(device), attention_mask.to(device))
+        return logits, targets.to(device)
+    return forward
+
+
+def make_text_forward(model, device):
+    def forward(batch):
+        input_ids, attention_mask, targets = batch
+        logits = model(input_ids.to(device), attention_mask.to(device))
+        return logits, targets.to(device)
+    return forward
+
+
+@torch.no_grad()
+def evaluate_page_model(model, loader: DataLoader, device, classes: list[str], forward_fn, amp: bool = False) -> dict:
+    model.eval()
+    all_preds, all_targets = [], []
+    for batch in loader:
+        with autocast_context(device, amp):
+            logits, targets = forward_fn(batch)
+        all_preds.extend(logits.argmax(dim=1).cpu().tolist())
+        all_targets.extend(targets.cpu().tolist())
+    return _classification_metrics(all_preds, all_targets, classes)
+
+
+@torch.no_grad()
+def evaluate_page_model_tta(model, dataset, classes: list[str], device, image_size: int,
+                             n_views: int, batch_size: int, amp: bool = False) -> dict:
+    """Vision-only test-time augmentation: averages softmax over the plain
+    view plus a few augmented ones. `dataset` must expose `.samples` as
+    (path, ..., label_idx) tuples (both ImageFolder and MultimodalManifestDataset do)."""
+    model.eval()
+    tta_transform = build_transforms(image_size, train=True, augment_strength="moderate")
+    plain_transform = build_transforms(image_size, train=False)
+    samples = dataset.samples
+
+    all_preds, all_targets = [], []
+    for start in range(0, len(samples), batch_size):
+        batch = samples[start:start + batch_size]
+        targets = [s[-1] for s in batch]
+        probs_sum = None
+        for transform in [plain_transform] + [tta_transform] * (n_views - 1):
+            images = torch.stack([transform(default_loader(s[0])) for s in batch]).to(device)
+            with autocast_context(device, amp):
+                logits = model(images)
+            probs = F.softmax(logits, dim=1).cpu()
+            probs_sum = probs if probs_sum is None else probs_sum + probs
+        all_preds.extend((probs_sum / n_views).argmax(dim=1).tolist())
+        all_targets.extend(targets)
+    return _classification_metrics(all_preds, all_targets, classes)
+
+
+def train_page_model(model, train_loader, val_loader, test_loader, classes, device, epochs,
+                      optimizer, scheduler, forward_fn, out_dir: Path,
+                      class_weights: torch.Tensor | None = None, tta_views: int = 0, image_size: int = 224,
+                      amp: bool = False):
+    weight_tensor = class_weights.to(device) if class_weights is not None else None
+    best_metric, best_state = -1.0, None
+    history = []
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        running_loss, n_batches = 0.0, 0
+        for batch in train_loader:
+            with autocast_context(device, amp):
+                logits, targets = forward_fn(batch)
+                loss = F.cross_entropy(logits, targets, weight=weight_tensor)
+            optimizer.zero_grad()
+            loss.backward()
+            clip_grad_norm_per_group(optimizer)
+            optimizer.step()
+            running_loss += loss.item()
+            n_batches += 1
+        if scheduler is not None:
+            scheduler.step()
+
+        entry = {"epoch": epoch, "train_loss": running_loss / max(1, n_batches)}
+        msg = f"epoch {epoch:>3}/{epochs}  loss={entry['train_loss']:.4f}"
+        tracked = -entry["train_loss"]
+        if val_loader is not None:
+            metrics = evaluate_page_model(model, val_loader, device, classes, forward_fn, amp=amp)
+            entry["val_accuracy"] = metrics["accuracy"]
+            entry["val_macro_f1"] = metrics["macro_f1"]
+            msg += f"  val_acc={metrics['accuracy']:.3f} val_macro_f1={metrics['macro_f1']:.3f}"
+            tracked = metrics["macro_f1"]
+        print(msg)
+        history.append(entry)
+
+        if tracked > best_metric:
+            best_metric = tracked
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        torch.save(model.state_dict(), out_dir / "model.pt")
+
+    (out_dir / "history.json").write_text(json.dumps(history, indent=2))
+    (out_dir / "classes.json").write_text(json.dumps(classes, indent=2))
+
+    # Training-set evaluation: a clean pass (no augmentation, no weighted
+    # resampling - a fresh unshuffled loader over the same underlying
+    # samples) over the exact data being trained on. If this is also stuck
+    # at majority-class-only, the model can't even fit what it's training
+    # on - an optimization/capacity problem, not a generalization one.
+    # TextManifestDataset has no .transform at all (text isn't augmented),
+    # so there's nothing to swap out for text-only mode - it's already a
+    # clean, deterministic pass every time.
+    has_transform = hasattr(train_loader.dataset, "transform")
+    if has_transform:
+        original_transform = train_loader.dataset.transform
+        train_loader.dataset.transform = build_transforms(image_size, train=False)
+    train_eval_loader = DataLoader(
+        train_loader.dataset, batch_size=train_loader.batch_size, shuffle=False, collate_fn=train_loader.collate_fn
+    )
+    train_metrics = evaluate_page_model(model, train_eval_loader, device, classes, forward_fn, amp=amp)
+    if has_transform:
+        train_loader.dataset.transform = original_transform
+    print(f"\ntrain-set (no augmentation) accuracy={train_metrics['accuracy']:.3f}  "
+          f"macro-F1={train_metrics['macro_f1']:.3f}")
+    (out_dir / "train_set_report.txt").write_text(train_metrics["report"])
+
+    if test_loader is not None:
+        if tta_views and tta_views > 1:
+            metrics = evaluate_page_model_tta(
+                model, test_loader.dataset, classes, device, image_size, tta_views, test_loader.batch_size, amp=amp
+            )
+            print(f"\ntest (TTA x{tta_views}) accuracy={metrics['accuracy']:.3f}  macro-F1={metrics['macro_f1']:.3f}")
+        else:
+            metrics = evaluate_page_model(model, test_loader, device, classes, forward_fn, amp=amp)
+            print(f"\ntest accuracy={metrics['accuracy']:.3f}  macro-F1={metrics['macro_f1']:.3f}")
+        print(metrics["report"])
+        (out_dir / "test_report.txt").write_text(metrics["report"])
+        (out_dir / "confusion_matrix.json").write_text(
+            json.dumps({"labels": classes, "matrix": metrics["confusion_matrix"]}, indent=2)
+        )
+        (out_dir / "confusion_matrix.txt").write_text(
+            format_confusion_matrix(metrics["confusion_matrix"], classes)
+        )
+
+
+def run_page(args, target_column: str):
+    device = pick_device(args.device)
+    amp = resolve_amp(args, device)
+    print(f"device: {device}  amp(bf16): {amp}")
+
+    sep = "\t" if str(args.manifest).endswith(".tsv") else ","
+    validate_manifest_paths(
+        pd.read_csv(args.manifest, sep=sep), args.image_root,
+        image_col=None if args.modality == "text" else args.image_col,
+        text_col=resolve_text_col(args) if args.modality in ("text", "multimodal") else None,
+        allow_missing=args.allow_missing_files,
+    )
+
+    if args.modality == "vision":
+        train_loader, val_loader, test_loader, classes = build_dataloaders_from_manifest(
+            args.manifest, args.image_root, args.image_size, args.batch_size,
+            image_col=args.image_col, label_col=target_column, split_col=args.split_col,
+            augment_strength=args.augment_strength, seed=args.seed,
+        )
+        model = BackboneClassifier(
+            args.image_backbone, len(classes), unfreeze_last_n_blocks=args.unfreeze_image_blocks, device=device,
+            gradient_checkpointing=args.gradient_checkpointing, project_to=args.project_to,
+        ).to(device)
+        forward_fn = make_vision_forward(model, device)
+    elif args.modality == "multimodal":
+        tokenizer = AutoTokenizer.from_pretrained(args.text_backbone)
+        train_loader, val_loader, test_loader, classes = build_multimodal_dataloaders(
+            args.manifest, args.image_root, target_column, tokenizer,
+            image_col=args.image_col, text_col=resolve_text_col(args), text_source=args.text_source,
+            split_col=args.split_col,
+            image_size=args.image_size, batch_size=args.batch_size, max_text_length=args.max_text_length,
+            augment_strength=args.augment_strength, seed=args.seed,
+        )
+        model = MultimodalBackboneClassifier(
+            args.image_backbone, len(classes), text_backbone=args.text_backbone,
+            unfreeze_image_blocks=args.unfreeze_image_blocks, unfreeze_text_layers=args.unfreeze_text_layers,
+            max_text_length=args.max_text_length, project_to=args.project_to, device=device,
+            gradient_checkpointing=args.gradient_checkpointing,
+        ).to(device)
+        forward_fn = make_multimodal_forward(model, device)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(args.text_backbone)
+        train_loader, val_loader, test_loader, classes = build_text_dataloaders(
+            args.manifest, args.image_root, target_column, tokenizer,
+            text_col=resolve_text_col(args), text_source=args.text_source, split_col=args.split_col,
+            batch_size=args.batch_size, max_text_length=args.max_text_length, seed=args.seed,
+        )
+        model = TextBackboneClassifier(
+            args.text_backbone, len(classes), unfreeze_last_n_layers=args.unfreeze_text_layers,
+            max_length=args.max_text_length, project_to=args.project_to, device=device,
+            gradient_checkpointing=args.gradient_checkpointing,
+        ).to(device)
+        forward_fn = make_text_forward(model, device)
+
+    print(f"{len(classes)} classes, {len(train_loader.dataset)} train pages, target={target_column!r}")
+    print(trainable_parameter_summary(model))
+
+    groups = differential_param_groups(model.embedder.parameters(), model.head.parameters(), args)
+    optimizer = torch.optim.AdamW(groups, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+
+    class_weights = (
+        class_weights_from_samples(train_loader.dataset.samples, len(classes))
+        if args.scenario == "quality" else None
+    )
+
+    use_tta = args.modality == "vision" and args.tta_views and args.tta_views > 1
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    train_page_model(
+        model, train_loader, val_loader, test_loader, classes, device, args.epochs,
+        optimizer, scheduler, forward_fn, args.out_dir,
+        class_weights=class_weights, tta_views=(args.tta_views if use_tta else 0), image_size=args.image_size,
+        amp=amp,
+    )
+
+
+# --------------------------------------------------------------------------
+# Sequence mode (train_sequence.py)
+# --------------------------------------------------------------------------
+
+def embed_pages(embedder, batch: dict, device) -> tuple[torch.Tensor, torch.Tensor]:
+    if "images_flat" in batch:
+        images = batch["images_flat"].to(device)
+        if "input_ids_flat" in batch:
+            embeds_flat = embedder(images, batch["input_ids_flat"].to(device), batch["attention_mask_flat"].to(device))
+        else:
+            embeds_flat = embedder(images)
+    else:
+        # text-only: no images_flat at all (PageSequenceDataset was built with image_col=None)
+        embeds_flat = embedder(batch["input_ids_flat"].to(device), batch["attention_mask_flat"].to(device))
+    B, T = batch["padding_mask"].shape
+    embeddings = torch.zeros(B, T, embedder.embed_dim, device=device, dtype=embeds_flat.dtype)
+    embeddings[batch["batch_index"], batch["time_index"]] = embeds_flat
+    return embeddings, batch["padding_mask"].to(device)
+
+
+def compute_sequence_losses(out: dict, batch: dict, device, start_pos_weight: float,
+                             loss_weights: dict[str, float] | None = None) -> dict:
+    """loss_weights (optional): {"start"/"doctype"/"layout"/"functional": weight},
+    missing keys default to 1.0 (current behaviour). Doctype's raw loss runs
+    ~2x layout/functional's and ~4-5x start's (36 classes, many with under
+    10 - some with exactly 1 - training examples), so with a plain unweighted
+    sum it dominates the shared gradient this all backprops through;
+    downweighting it (e.g. --loss-weight-doctype 0.3) tests whether that
+    dominance, not just doctype's own difficulty, is holding the other
+    heads back."""
+    weights = {"start": 1.0, "doctype": 1.0, "layout": 1.0, "functional": 1.0, **(loss_weights or {})}
+
+    padding_mask = batch["padding_mask"].to(device)
+    valid = ~padding_mask
+
+    start_target = batch["start"].to(device)
+    start_loss_per_page = F.binary_cross_entropy_with_logits(
+        out["start_logits"], start_target, reduction="none",
+        pos_weight=torch.tensor(start_pos_weight, device=device),
+    )
+    start_loss = (start_loss_per_page * valid).sum() / valid.sum().clamp(min=1)
+
+    def ce_loss(logits, key):
+        target = batch[key].to(device)
+        return F.cross_entropy(logits.reshape(-1, logits.shape[-1]), target.reshape(-1), ignore_index=IGNORE_INDEX)
+
+    doctype_loss = ce_loss(out["doctype_logits"], "doctype")
+    layout_loss = ce_loss(out["layout_logits"], "layout")
+    functional_loss = ce_loss(out["functional_logits"], "functional")
+    total = (weights["start"] * start_loss + weights["doctype"] * doctype_loss
+             + weights["layout"] * layout_loss + weights["functional"] * functional_loss)
+    return {"total": total, "start": start_loss, "doctype": doctype_loss, "layout": layout_loss, "functional": functional_loss}
+
+
+@torch.no_grad()
+def evaluate_sequence(embedder, seq_model, loader: DataLoader, device,
+                       classes: dict[str, list[str]] | None = None, amp: bool = False,
+                       teacher_forced: bool = False) -> dict:
+    """classes (optional): {"doctype": [...], "layout": [...], "functional": [...]}
+    - when given, a full sklearn classification_report is also computed per
+    task (and for start-page). Only pass this for the final test evaluation,
+    not the per-epoch val one - it's needlessly expensive/verbose otherwise.
+
+    teacher_forced: segment using ground-truth start-page labels instead of
+    the model's own predictions - not achievable at real inference time, but
+    useful as a diagnostic to check whether low doctype/layout/functional
+    scores are caused by imperfect self-predicted segmentation (see
+    --eval-teacher-forced). start_* metrics are identical either way, since
+    the start-page head's own predictions never depend on this flag."""
+    embedder.eval()
+    seq_model.eval()
+
+    start_true, start_pred = [], []
+    task_true = {"doctype": [], "layout": [], "functional": []}
+    task_pred = {"doctype": [], "layout": [], "functional": []}
+    n_classes: dict[str, int] = {}
+
+    for batch in loader:
+        with autocast_context(device, amp):
+            embeddings, padding_mask = embed_pages(embedder, batch, device)
+            true_start = batch["start"].to(device) if teacher_forced else None
+            out = seq_model(embeddings, padding_mask, true_start_page=true_start)
+        valid = (~padding_mask).cpu()
+
+        start_true.append(batch["start"][valid])
+        start_pred.append((torch.sigmoid(out["start_logits"]).cpu() > 0.5).float()[valid])
+
+        for key in task_true:
+            target = batch[key][valid]
+            preds = out[f"{key}_logits"].argmax(dim=-1).cpu()[valid]
+            keep = target != IGNORE_INDEX
+            task_true[key].append(target[keep])
+            task_pred[key].append(preds[keep])
+            n_classes[key] = out[f"{key}_logits"].shape[-1]
+
+    start_true_cat = torch.cat(start_true).numpy()
+    start_pred_cat = torch.cat(start_pred).numpy()
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        start_true_cat, start_pred_cat, average="binary", zero_division=0
+    )
+    metrics = {"start_precision": precision, "start_recall": recall, "start_f1": f1}
+    if classes is not None:
+        metrics["start_report"] = classification_report(
+            start_true_cat, start_pred_cat, target_names=["not_start_page", "start_page"], zero_division=0
+        )
+        metrics["start_confusion_matrix"] = confusion_matrix(start_true_cat, start_pred_cat, labels=[0, 1]).tolist()
+
+    for key in task_true:
+        true_cat = torch.cat(task_true[key]) if task_true[key] else torch.tensor([])
+        pred_cat = torch.cat(task_pred[key]) if task_pred[key] else torch.tensor([])
+        if len(true_cat) == 0:
+            metrics[f"{key}_accuracy"] = float("nan")
+            metrics[f"{key}_macro_f1"] = float("nan")
+            continue
+        metrics[f"{key}_accuracy"] = (true_cat == pred_cat).float().mean().item()
+        # labels=range(n_classes): average over every class in the trained
+        # vocabulary, not just whichever ones happen to appear in this
+        # split - matching classification_report below, which already does
+        # this. Without it, sklearn's default (average only over labels
+        # observed in y_true/y_pred) silently drops classes with zero test
+        # examples from the average instead of counting them as 0 - which
+        # inflates the score and, for a vocabulary built specifically to
+        # collapse rare classes into "Other" buckets, is exactly backwards:
+        # those are the classes most likely to have zero test support on a
+        # small split, and most in need of being visible in the number.
+        metrics[f"{key}_macro_f1"] = f1_score(
+            true_cat.numpy(), pred_cat.numpy(), average="macro", zero_division=0, labels=list(range(n_classes[key]))
+        )
+        if classes is not None and key in classes:
+            metrics[f"{key}_report"] = classification_report(
+                true_cat.numpy(), pred_cat.numpy(), labels=list(range(len(classes[key]))),
+                target_names=classes[key], zero_division=0,
+            )
+            metrics[f"{key}_confusion_matrix"] = confusion_matrix(
+                true_cat.numpy(), pred_cat.numpy(), labels=list(range(len(classes[key])))
+            ).tolist()
+
+    return metrics
+
+
+def run_sequence_from_cached_embeddings(args, targets: list[str]) -> None:
+    device = pick_device(args.device)
+    print(f"device: {device}")
+    if args.max_pages_per_batch:
+        print("note: --max-pages-per-batch is ignored with --cached-embeddings (plain --batch-size is used).")
+
+    embeddings = np.load(args.cached_embeddings / "embeddings.npy")
+    manifest = pd.read_csv(args.cached_embeddings / "embeddings_manifest.tsv", sep="\t")
+
+    if args.recompose_passes > 0:
+        # precompute_embeddings.py's output manifest always uses this fixed
+        # column-name schema (unlike --manifest, which is configurable via
+        # --pdf-col etc.) - row_id (and therefore the embeddings.npy lookup)
+        # passes through recompose_documents unchanged either way.
+        synthetic = recompose_documents(
+            manifest, "pdf_id", "page_number", "document_type", "start_page", "split",
+            mode=args.recompose_mode, passes=args.recompose_passes,
+            cover_doctype=(args.cover_doctype or None), seed=args.seed,
+        )
+        print(f"--recompose-passes {args.recompose_passes} ({args.recompose_mode}): added "
+              f"{synthetic['pdf_id'].nunique()} synthetic train PDFs ({len(synthetic)} rows)")
+        manifest = pd.concat([manifest, synthetic], ignore_index=True)
+
+    raw_dim = embeddings.shape[1]
+    # ProjectedSequenceModel always builds a real (trainable) projection
+    # layer, even when no shrinking is requested - so when --project-to is
+    # left at its default None, project_to must still resolve to a concrete
+    # number (raw_dim) here, and that same number has to be used again below
+    # when folding into a real embedder, or the two projections' shapes
+    # won't match (a real Sequential vs. the embedder's nn.Identity()).
+    project_to = args.project_to or raw_dim
+    print(f"{embeddings.shape[0]} pages, {manifest['pdf_id'].nunique()} PDFs, raw_dim={raw_dim} -> "
+          f"project_to={project_to}{' (unchanged, no shrinking requested)' if not args.project_to else ''}")
+
+    multimodal = args.modality == "multimodal"
+    text_only = args.modality == "text"
+    # Fail fast, before spending a full training run: the embeddings' own
+    # dimensionality has to match what --image-backbone(+--text-backbone)
+    # would actually produce, or folding the trained projection into a real
+    # embedder at the end (which needs that exact shape) errors out late.
+    if text_only:
+        expected_dim = AutoConfig.from_pretrained(args.text_backbone).hidden_size
+        backbones = args.text_backbone
+    else:
+        expected_dim = AutoConfig.from_pretrained(args.image_backbone).hidden_size
+        backbones = args.image_backbone
+        if multimodal:
+            expected_dim += AutoConfig.from_pretrained(args.text_backbone).hidden_size
+            backbones += f" + {args.text_backbone}"
+    if expected_dim != raw_dim:
+        raise SystemExit(
+            f"--cached-embeddings dim ({raw_dim}) doesn't match --image-backbone/--text-backbone "
+            f"({backbones} -> {expected_dim}-dim). Pass the backbone(s) actually used by "
+            f"precompute_embeddings.py for this directory."
+        )
+
+    doctype_classes = build_label_vocab(manifest, "split", "document_type")
+    layout_classes = build_label_vocab(manifest, "split", "layout_type")
+    functional_classes = build_label_vocab(manifest, "split", "functional_category")
+    print(f"{len(doctype_classes)} doctype classes, {len(layout_classes)} layout classes, "
+          f"{len(functional_classes)} functional classes")
+
+    def make_ds(split: str) -> EmbeddingSequenceDataset:
+        return EmbeddingSequenceDataset(embeddings, manifest, split, doctype_classes, layout_classes, functional_classes)
+
+    train_ds, val_ds, test_ds = make_ds("train"), make_ds("val"), make_ds("test")
+    print(f"{len(train_ds)} train PDFs, {len(val_ds)} val PDFs, {len(test_ds)} test PDFs")
+
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_cached_embeddings)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_cached_embeddings)
+    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_cached_embeddings)
+
+    train_rows = manifest[manifest["split"] == "train"]
+    n_pos = (train_rows["start_page"].astype(str).str.strip().str.lower() == "yes").sum()
+    n_total = len(train_rows)
+    start_pos_weight = max(1.0, (n_total - n_pos) / max(1, n_pos))
+    print(f"start-page positive rate: {n_pos / max(1, n_total):.2f} (pos_weight={start_pos_weight:.2f})")
+
+    loss_weights = {
+        "start": args.loss_weight_start, "doctype": args.loss_weight_doctype,
+        "layout": args.loss_weight_layout, "functional": args.loss_weight_functional,
+    }
+    if any(w != 1.0 for w in loss_weights.values()):
+        print(f"loss weights: {loss_weights}")
+
+    model = ProjectedSequenceModel(
+        raw_dim, project_to, len(doctype_classes), len(layout_classes), len(functional_classes),
+        args.n_heads, args.n_layers, doc_classification=args.doc_classification,
+    ).to(device)
+    print(f"sequence model (+ projection): {trainable_parameter_summary(model)}")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    best_metric, best_state = -1.0, None
+    history = []
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        running = {"total": 0.0, "start": 0.0, "doctype": 0.0, "layout": 0.0, "functional": 0.0}
+        n_batches = 0
+        for batch in train_loader:
+            embeddings_batch = batch["embeddings"].to(device)
+            padding_mask = batch["padding_mask"].to(device)
+            out = model(embeddings_batch, padding_mask, true_start_page=batch["start"].to(device))
+            losses = compute_losses_cached_embeddings(out, batch, device, start_pos_weight, loss_weights=loss_weights)
+
+            optimizer.zero_grad()
+            losses["total"].backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+
+            for k in running:
+                running[k] += losses[k].item()
+            n_batches += 1
+        scheduler.step()
+        avg = {k: v / max(1, n_batches) for k, v in running.items()}
+
+        val_metrics = evaluate_cached_embeddings(model, val_loader, device)
+        tracked = sum(val_metrics[TARGET_METRIC_KEY[t]] for t in targets)
+        print(
+            f"epoch {epoch:>3}/{args.epochs}  loss={avg['total']:.3f} "
+            f"(start={avg['start']:.3f} doctype={avg['doctype']:.3f} layout={avg['layout']:.3f} "
+            f"functional={avg['functional']:.3f})  "
+            f"val: start_f1={val_metrics['start_f1']:.3f} doctype_f1={val_metrics['doctype_macro_f1']:.3f} "
+            f"layout_f1={val_metrics['layout_macro_f1']:.3f} functional_f1={val_metrics['functional_macro_f1']:.3f}"
+            f"  [tracked ({'+'.join(targets)})={tracked:.3f}]"
+        )
+        history.append({
+            "epoch": epoch,
+            "train_loss": avg["total"], "train_loss_start": avg["start"], "train_loss_doctype": avg["doctype"],
+            "train_loss_layout": avg["layout"], "train_loss_functional": avg["functional"],
+            **{f"val_{k}": v for k, v in val_metrics.items()},
+            "tracked": tracked,
+        })
+        if tracked > best_metric:
+            best_metric = tracked
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    (args.out_dir / "history.json").write_text(json.dumps(history, indent=2))
+    (args.out_dir / "classes.json").write_text(json.dumps({
+        "document_type": doctype_classes, "layout_type": layout_classes, "functional_category": functional_classes,
+    }, indent=2))
+
+    # Fold the trained projection into a real, freshly-loaded embedder (its
+    # backbone weights are exactly the pretrained checkpoint - unchanged,
+    # since sequence mode always freezes it) so sequence_model.pt is a
+    # self-contained checkpoint predict.py can load exactly like one from a
+    # non-cached run.
+    if multimodal:
+        embedder = MultimodalPageEmbedder(
+            args.image_backbone, args.text_backbone, max_text_length=args.max_text_length,
+            project_to=project_to, device=device,
+        ).to(device)
+    elif text_only:
+        embedder = TextEmbedder(
+            args.text_backbone, max_length=args.max_text_length, project_to=project_to, device=device,
+        ).to(device)
+    else:
+        embedder = build_image_embedder(args.image_backbone, project_to=project_to, device=device).to(device)
+    embedder.projection.load_state_dict(model.projection.state_dict())
+
+    torch.save({"embedder": embedder.state_dict(), "seq_model": model.seq_model.state_dict()},
+               args.out_dir / "sequence_model.pt")
+    (args.out_dir / "model_config.json").write_text(json.dumps({
+        "modality": args.modality,
+        "image_backbone": None if text_only else args.image_backbone,
+        "text_backbone": args.text_backbone if (multimodal or text_only) else None,
+        "image_size": args.image_size,
+        "max_text_length": args.max_text_length,
+        "project_to": project_to,
+        "n_heads": args.n_heads,
+        "n_layers": args.n_layers,
+        "doc_classification": args.doc_classification,
+        "embed_dim": embedder.embed_dim,
+    }, indent=2))
+
+    class_lists = {"doctype": doctype_classes, "layout": layout_classes, "functional": functional_classes}
+
+    train_eval_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_cached_embeddings)
+    train_metrics = evaluate_cached_embeddings(model, train_eval_loader, device, classes=class_lists)
+    print("\ntrain-set metrics:")
+    train_report_lines = ["train-set (self-predicted segmentation) metrics:", ""]
+    for key in ["start_precision", "start_recall", "start_f1", "doctype_accuracy", "doctype_macro_f1",
+                "layout_accuracy", "layout_macro_f1", "functional_accuracy", "functional_macro_f1"]:
+        print(f"  {key}: {train_metrics[key]:.3f}")
+        train_report_lines.append(f"{key}: {train_metrics[key]:.3f}")
+    for key in ("start_report", "doctype_report", "layout_report", "functional_report"):
+        if key in train_metrics:
+            train_report_lines.append(f"\n--- {key} ---\n{train_metrics[key]}")
+    (args.out_dir / "train_set_report.txt").write_text("\n".join(train_report_lines))
+
+    test_metrics = evaluate_cached_embeddings(model, test_loader, device, classes=class_lists)
+    print(f"\ntest metrics (tracked targets: {', '.join(targets)}):")
+    report_lines = [f"tracked targets: {', '.join(targets)}", ""]
+    for k, v in test_metrics.items():
+        if k.endswith("_report") or k.endswith("_confusion_matrix"):
+            continue
+        print(f"  {k}: {v:.3f}")
+        report_lines.append(f"{k}: {v:.3f}")
+    for k, v in test_metrics.items():
+        if k.endswith("_report"):
+            report_lines.append(f"\n--- {k} ---\n{v}")
+    (args.out_dir / "test_report.txt").write_text("\n".join(report_lines))
+
+    cm_json = {"start_page": {"labels": ["not_start_page", "start_page"],
+                               "matrix": test_metrics["start_confusion_matrix"]}}
+    cm_text = [f"--- start_page ---\n{format_confusion_matrix(test_metrics['start_confusion_matrix'], ['not_start_page', 'start_page'])}"]
+    target_names = {"doctype": "document_type", "layout": "layout_type", "functional": "functional_category"}
+    for key, labels in class_lists.items():
+        matrix = test_metrics.get(f"{key}_confusion_matrix")
+        if matrix is None:
+            continue
+        cm_json[target_names[key]] = {"labels": labels, "matrix": matrix}
+        cm_text.append(f"--- {target_names[key]} ---\n{format_confusion_matrix(matrix, labels)}")
+    (args.out_dir / "confusion_matrices.json").write_text(json.dumps(cm_json, indent=2))
+    (args.out_dir / "confusion_matrices.txt").write_text("\n\n".join(cm_text))
+
+    print(f"\nWrote sequence_model.pt, model_config.json, classes.json, history.json, train_set_report.txt, "
+          f"test_report.txt, confusion_matrices.{{json,txt}} to {args.out_dir}")
+
+
+def run_sequence(args, targets: list[str]):
+    if args.cached_embeddings:
+        return run_sequence_from_cached_embeddings(args, targets)
+
+    device = pick_device(args.device)
+    amp = resolve_amp(args, device)
+    print(f"device: {device}  amp(bf16): {amp}")
+
+    manifest = pd.read_csv(args.manifest, sep="\t" if str(args.manifest).endswith(".tsv") else ",")
+    validate_manifest_paths(
+        manifest, args.image_root,
+        image_col=None if args.modality == "text" else args.image_col,
+        text_col=resolve_text_col(args) if args.modality in ("text", "multimodal") else None,
+        allow_missing=args.allow_missing_files,
+    )
+
+    if args.recompose_passes > 0:
+        synthetic = recompose_documents(
+            manifest, args.pdf_col, args.page_col, args.doctype_col, args.start_col, args.split_col,
+            mode=args.recompose_mode, passes=args.recompose_passes,
+            cover_doctype=(args.cover_doctype or None), seed=args.seed,
+        )
+        print(f"--recompose-passes {args.recompose_passes} ({args.recompose_mode}): added "
+              f"{synthetic[args.pdf_col].nunique()} synthetic train PDFs ({len(synthetic)} rows)")
+        manifest = pd.concat([manifest, synthetic], ignore_index=True)
+
+    doctype_classes = build_label_vocab(manifest, args.split_col, args.doctype_col)
+    layout_classes = build_label_vocab(manifest, args.split_col, args.layout_col)
+    functional_classes = build_label_vocab(manifest, args.split_col, args.functional_col)
+    print(f"{len(doctype_classes)} doctype classes, {len(layout_classes)} layout classes, "
+          f"{len(functional_classes)} functional classes")
+
+    multimodal = args.modality == "multimodal"
+    text_only = args.modality == "text"
+    tokenizer = AutoTokenizer.from_pretrained(args.text_backbone) if (multimodal or text_only) else None
+
+    text_extractor = get_text_extractor(args.text_source) if (multimodal or text_only) else None
+
+    def make_dataset(split: str, train: bool) -> PageSequenceDataset:
+        return PageSequenceDataset(
+            manifest, split, args.image_root,
+            build_transforms(args.image_size, train=train, augment_strength=args.augment_strength),
+            doctype_classes, layout_classes, functional_classes,
+            pdf_col=args.pdf_col, page_col=args.page_col, image_col=None if text_only else args.image_col,
+            doctype_col=args.doctype_col, layout_col=args.layout_col, functional_col=args.functional_col,
+            start_col=args.start_col, split_col=args.split_col,
+            text_col=resolve_text_col(args) if (multimodal or text_only) else None,
+            text_extractor=text_extractor,
+        )
+
+    train_ds = make_dataset("train", train=True)
+    val_ds = make_dataset("val", train=False)
+    test_ds = make_dataset("test", train=False)
+    print(f"{len(train_ds)} train PDFs, {len(val_ds)} val PDFs, {len(test_ds)} test PDFs")
+
+    collate = make_pdf_collate_fn(tokenizer, args.max_text_length)
+
+    def make_loader(ds: PageSequenceDataset, shuffle: bool) -> DataLoader:
+        if args.max_pages_per_batch:
+            sampler = PageBudgetBatchSampler(ds.page_counts(), args.max_pages_per_batch, shuffle=shuffle, seed=args.seed)
+            return DataLoader(ds, batch_sampler=sampler, collate_fn=collate)
+        return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle, collate_fn=collate)
+
+    train_loader = make_loader(train_ds, shuffle=True)
+    val_loader = make_loader(val_ds, shuffle=False)
+    test_loader = make_loader(test_ds, shuffle=False)
+    if args.max_pages_per_batch:
+        print(f"batching by page budget: max {args.max_pages_per_batch} pages/batch "
+              f"(~{len(train_loader)} train batches/epoch)")
+
+    n_pos = sum(row[args.start_col].strip().lower() == "yes" for _, row in
+                manifest[manifest[args.split_col] == "train"].iterrows())
+    n_total = (manifest[args.split_col] == "train").sum()
+    start_pos_weight = max(1.0, (n_total - n_pos) / max(1, n_pos))
+    print(f"start-page positive rate: {n_pos / max(1, n_total):.2f} (pos_weight={start_pos_weight:.2f})")
+
+    loss_weights = {
+        "start": args.loss_weight_start, "doctype": args.loss_weight_doctype,
+        "layout": args.loss_weight_layout, "functional": args.loss_weight_functional,
+    }
+    if any(w != 1.0 for w in loss_weights.values()):
+        print(f"loss weights: {loss_weights}")
+
+    if multimodal:
+        embedder = MultimodalPageEmbedder(
+            image_backbone=args.image_backbone, text_backbone=args.text_backbone,
+            unfreeze_image_blocks=args.unfreeze_image_blocks, unfreeze_text_layers=args.unfreeze_text_layers,
+            max_text_length=args.max_text_length, project_to=args.project_to, device=device,
+            gradient_checkpointing=args.gradient_checkpointing,
+        ).to(device)
+    elif text_only:
+        embedder = TextEmbedder(
+            args.text_backbone, unfreeze_last_n_layers=args.unfreeze_text_layers, max_length=args.max_text_length,
+            device=device, gradient_checkpointing=args.gradient_checkpointing, project_to=args.project_to,
+        ).to(device)
+    else:
+        embedder = build_image_embedder(
+            args.image_backbone, unfreeze_last_n_blocks=args.unfreeze_image_blocks, device=device,
+            gradient_checkpointing=args.gradient_checkpointing, project_to=args.project_to,
+        ).to(device)
+
+    seq_model = SequenceContextModel(
+        embed_dim=embedder.embed_dim, num_doctype=len(doctype_classes), num_layout=len(layout_classes),
+        num_functional=len(functional_classes), n_heads=args.n_heads, n_layers=args.n_layers,
+        doc_classification=args.doc_classification,
+    ).to(device)
+    # Reported separately since a frozen backbone (0% here) is expected and
+    # correct, not a sign nothing is training - the Transformer encoder and
+    # four heads in seq_model are trained regardless of the backbone setting.
+    print(f"backbone: {trainable_parameter_summary(embedder)}")
+    print(f"sequence model: {trainable_parameter_summary(seq_model)}")
+
+    embedder_params = [p for p in embedder.parameters() if p.requires_grad]
+    seq_params = list(seq_model.parameters())
+    groups = differential_param_groups(embedder_params, seq_params, args)
+    optimizer = torch.optim.AdamW(groups, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    best_metric, best_state = -1.0, None
+    history = []
+
+    for epoch in range(1, args.epochs + 1):
+        embedder.train()
+        seq_model.train()
+        running = {"total": 0.0, "start": 0.0, "doctype": 0.0, "layout": 0.0, "functional": 0.0}
+        n_batches = 0
+
+        for batch in train_loader:
+            with autocast_context(device, amp):
+                embeddings, padding_mask = embed_pages(embedder, batch, device)
+                out = seq_model(embeddings, padding_mask, true_start_page=batch["start"].to(device))
+                losses = compute_sequence_losses(out, batch, device, start_pos_weight, loss_weights=loss_weights)
+
+            optimizer.zero_grad()
+            losses["total"].backward()
+            clip_grad_norm_per_group(optimizer)
+            optimizer.step()
+
+            for k in running:
+                running[k] += losses[k].item()
+            n_batches += 1
+
+        if scheduler is not None:
+            scheduler.step()
+        avg = {k: v / max(1, n_batches) for k, v in running.items()}
+
+        val_metrics = evaluate_sequence(embedder, seq_model, val_loader, device, amp=amp)
+        tracked = sum(val_metrics[TARGET_METRIC_KEY[t]] for t in targets)
+        print(
+            f"epoch {epoch:>3}/{args.epochs}  loss={avg['total']:.3f} "
+            f"(start={avg['start']:.3f} doctype={avg['doctype']:.3f} layout={avg['layout']:.3f} "
+            f"functional={avg['functional']:.3f})  "
+            f"val: start_f1={val_metrics['start_f1']:.3f} doctype_f1={val_metrics['doctype_macro_f1']:.3f} "
+            f"layout_f1={val_metrics['layout_macro_f1']:.3f} functional_f1={val_metrics['functional_macro_f1']:.3f}"
+            f"  [tracked ({'+'.join(targets)})={tracked:.3f}]"
+        )
+        history.append({
+            "epoch": epoch,
+            "train_loss": avg["total"], "train_loss_start": avg["start"], "train_loss_doctype": avg["doctype"],
+            "train_loss_layout": avg["layout"], "train_loss_functional": avg["functional"],
+            **{f"val_{k}": v for k, v in val_metrics.items()},
+            "tracked": tracked,
+        })
+
+        if tracked > best_metric:
+            best_metric = tracked
+            best_state = {
+                "embedder": {k: v.detach().cpu().clone() for k, v in embedder.state_dict().items()},
+                "seq_model": {k: v.detach().cpu().clone() for k, v in seq_model.state_dict().items()},
+            }
+
+    if best_state is not None:
+        embedder.load_state_dict(best_state["embedder"])
+        seq_model.load_state_dict(best_state["seq_model"])
+        torch.save(best_state, args.out_dir / "sequence_model.pt")
+
+    (args.out_dir / "history.json").write_text(json.dumps(history, indent=2))
+    (args.out_dir / "classes.json").write_text(json.dumps({
+        "document_type": doctype_classes, "layout_type": layout_classes, "functional_category": functional_classes,
+    }, indent=2))
+    # Everything predict.py needs to reconstruct this exact architecture -
+    # unfreeze/lr/epochs etc. don't matter once training is done, only what
+    # defines the model's shape does.
+    (args.out_dir / "model_config.json").write_text(json.dumps({
+        "modality": args.modality,
+        "image_backbone": None if text_only else args.image_backbone,
+        "text_backbone": args.text_backbone if (multimodal or text_only) else None,
+        "image_size": args.image_size,
+        "max_text_length": args.max_text_length,
+        "project_to": args.project_to,
+        "n_heads": args.n_heads,
+        "n_layers": args.n_layers,
+        "doc_classification": args.doc_classification,
+        "embed_dim": embedder.embed_dim,
+    }, indent=2))
+
+    class_lists = {"doctype": doctype_classes, "layout": layout_classes, "functional": functional_classes}
+
+    # Training-set evaluation (self-predicted segmentation, same as the test
+    # metrics below - a fair comparison): a fresh, non-augmented pass over
+    # the exact PDFs being trained on. If this is also stuck at
+    # majority-class-only, the model can't fit its own training data - an
+    # optimization/capacity problem, not a generalization one.
+    train_eval_ds = make_dataset("train", train=False)
+    train_eval_loader = make_loader(train_eval_ds, shuffle=False)
+    train_metrics = evaluate_sequence(embedder, seq_model, train_eval_loader, device, classes=class_lists, amp=amp)
+    print("\ntrain-set (no augmentation) metrics:")
+    train_report_lines = ["train-set (no augmentation) metrics:", ""]
+    for key in ["start_precision", "start_recall", "start_f1", "doctype_accuracy", "doctype_macro_f1",
+                "layout_accuracy", "layout_macro_f1", "functional_accuracy", "functional_macro_f1"]:
+        print(f"  {key}: {train_metrics[key]:.3f}")
+        train_report_lines.append(f"{key}: {train_metrics[key]:.3f}")
+    for key in ("start_report", "doctype_report", "layout_report", "functional_report"):
+        if key in train_metrics:
+            train_report_lines.append(f"\n--- {key} ---\n{train_metrics[key]}")
+    (args.out_dir / "train_set_report.txt").write_text("\n".join(train_report_lines))
+
+    test_metrics = evaluate_sequence(embedder, seq_model, test_loader, device, classes=class_lists, amp=amp)
+
+    print(f"\ntest metrics (tracked targets: {', '.join(targets)}):")
+    report_lines = [f"tracked targets: {', '.join(targets)}", ""]
+    for k, v in test_metrics.items():
+        if k.endswith("_report") or k.endswith("_confusion_matrix"):
+            continue
+        print(f"  {k}: {v:.3f}")
+        report_lines.append(f"{k}: {v:.3f}")
+    for k, v in test_metrics.items():
+        if k.endswith("_report"):
+            report_lines.append(f"\n--- {k} ---\n{v}")
+    (args.out_dir / "test_report.txt").write_text("\n".join(report_lines))
+
+    cm_json = {"start_page": {"labels": ["not_start_page", "start_page"],
+                               "matrix": test_metrics["start_confusion_matrix"]}}
+    cm_text = [f"--- start_page ---\n{format_confusion_matrix(test_metrics['start_confusion_matrix'], ['not_start_page', 'start_page'])}"]
+    target_names = {"doctype": "document_type", "layout": "layout_type", "functional": "functional_category"}
+    for key, labels in class_lists.items():
+        matrix = test_metrics.get(f"{key}_confusion_matrix")
+        if matrix is None:
+            continue
+        cm_json[target_names[key]] = {"labels": labels, "matrix": matrix}
+        cm_text.append(f"--- {target_names[key]} ---\n{format_confusion_matrix(matrix, labels)}")
+    (args.out_dir / "confusion_matrices.json").write_text(json.dumps(cm_json, indent=2))
+    (args.out_dir / "confusion_matrices.txt").write_text("\n\n".join(cm_text))
+
+    if args.eval_teacher_forced:
+        oracle_metrics = evaluate_sequence(
+            embedder, seq_model, test_loader, device, classes=class_lists, amp=amp, teacher_forced=True
+        )
+        compare_keys = [
+            "start_f1", "doctype_accuracy", "doctype_macro_f1",
+            "layout_accuracy", "layout_macro_f1", "functional_accuracy", "functional_macro_f1",
+        ]
+        print("\ndiagnostic: self-predicted vs ORACLE (ground-truth) segmentation "
+              "- a big gap means low doctype/layout/functional scores are mostly "
+              "caused by imperfect start-page segmentation, not those heads themselves:")
+        print(f"  {'metric':<22} {'self-predicted':>15} {'oracle':>10}")
+        diag_lines = [
+            "ORACLE (ground-truth start-page) segmentation diagnostic.",
+            "Not achievable at real inference time - compares against the self-predicted",
+            "test metrics in test_report.txt. A big gap here means the doctype/layout/",
+            "functional heads are being hurt mainly by imperfect self-predicted",
+            "segmentation, not by those heads' own learned representations; a small gap",
+            "means segmentation isn't the bottleneck. start_f1 is identical in both",
+            "columns by construction - the start-page head's own predictions never",
+            "depend on this flag, only the *other* heads' segment pooling does.",
+            "",
+            f"{'metric':<22} {'self-predicted':>15} {'oracle':>10}",
+        ]
+        for key in compare_keys:
+            print(f"  {key:<22} {test_metrics[key]:>15.3f} {oracle_metrics[key]:>10.3f}")
+            diag_lines.append(f"{key:<22} {test_metrics[key]:>15.3f} {oracle_metrics[key]:>10.3f}")
+        for key in ("doctype_report", "layout_report", "functional_report"):
+            if key in oracle_metrics:
+                diag_lines.append(f"\n--- oracle {key} ---\n{oracle_metrics[key]}")
+        (args.out_dir / "diagnostic_teacher_forced.txt").write_text("\n".join(diag_lines))
+        print(f"\nWrote {args.out_dir / 'diagnostic_teacher_forced.txt'}")
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--manifest", type=Path, default=None,
+                         help="required unless --cached-embeddings is set (--mode sequence only)")
+    parser.add_argument("--image-root", type=Path, default=Path(""))
+    parser.add_argument("--cached-embeddings", type=Path, default=None,
+                         help="--mode sequence only: train directly from a precompute_embeddings.py output "
+                              "directory (embeddings.npy + embeddings_manifest.tsv) instead of raw images/"
+                              "PageXML. Sequence mode always freezes the backbone (SEQUENCE_MODE_OVERRIDES), "
+                              "so its forward pass never needs gradients - recomputing it fresh every epoch "
+                              "from raw images is pure overhead; this skips straight to training the "
+                              "projection + SequenceContextModel on the cached vectors, then folds the "
+                              "trained projection into a real embedder so the saved checkpoint is identical "
+                              "in shape to one produced without this flag. --manifest/--image-root and the "
+                              "raw *-col flags are ignored when this is set; --max-pages-per-batch isn't "
+                              "supported here (embeddings are tiny - a fixed --batch-size is enough).")
+    parser.add_argument("--out-dir", type=Path, default=None,
+                         help="default: runs/<scenario>_<mode>_<modality>_<target>")
+
+    parser.add_argument("--scenario", choices=list(PRESETS), required=True)
+    parser.add_argument("--mode", choices=["page", "sequence"], required=True)
+    parser.add_argument("--modality", choices=["vision", "multimodal", "text"], required=True)
+    parser.add_argument(
+        "--target", nargs="+", choices=list(TARGET_COLUMN_ARG), default=None,
+        help="page mode: exactly one. sequence mode: default is all four (see module docstring).",
+    )
+
+    # Hyperparameters default to None so --scenario fills them in; pass any
+    # of these explicitly to override just that one value.
+    parser.add_argument("--image-backbone", default=None,
+                         help="a HuggingFace checkpoint (e.g. facebook/dinov2-small, "
+                              "microsoft/dit-large-finetuned-rvlcdip - loaded via AutoModel) or one of "
+                              "models.CNN_BACKBONES's torchvision CNN backbones (vgg16, efficientnet_b0) - "
+                              "see build_image_embedder() in lib/models.py for the dispatch")
+    parser.add_argument("--text-backbone", default=None)
+    parser.add_argument("--unfreeze-image-blocks", type=int, default=None)
+    parser.add_argument("--unfreeze-text-layers", type=int, default=None)
+    parser.add_argument("--gradient-checkpointing", action="store_true",
+                         help="trade compute for memory on any unfrozen backbone blocks (no effect when "
+                              "--unfreeze-*-blocks/layers is 0 - a frozen backbone already retains no "
+                              "activations for backward). Off by default since it costs ~20-30%% more compute.")
+    parser.add_argument("--image-size", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None, help="pages per batch (page mode) or PDFs per batch (sequence mode)")
+    parser.add_argument("--max-pages-per-batch", type=int, default=None,
+                         help="sequence mode only: cap total pages per batch instead of a fixed PDF count "
+                              "(--batch-size). Real documents here range from a handful of pages to 80+, so a "
+                              "fixed PDF count doesn't bound memory - two long PDFs landing in the same small "
+                              "batch can still OOM. Overrides --batch-size for sequence mode when set.")
+    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--lr", type=float, default=None, help="flat lr, used when --scenario efficient")
+    parser.add_argument("--lr-backbone", type=float, default=None, help="used when --scenario quality")
+    parser.add_argument("--lr-head", type=float, default=None, help="used when --scenario quality")
+    parser.add_argument("--augment-strength", choices=["moderate", "strong"], default=None)
+    parser.add_argument("--max-text-length", type=int, default=None)
+    parser.add_argument("--tta-views", type=int, default=None, help="page+vision mode only")
+    parser.add_argument("--n-heads", type=int, default=None, help="sequence mode only")
+    parser.add_argument("--n-layers", type=int, default=None, help="sequence mode only")
+    parser.add_argument("--project-to", type=int, default=None,
+                         help="project the embedding down to this size before it reaches the classifier "
+                              "head(s) (or, in --modality multimodal, before the fused image+text vector "
+                              "reaches them). Matters most in --mode sequence with a large-embed_dim backbone "
+                              "(e.g. DiT-large, 1024-dim): SequenceContextModel's heads scale with embed_dim, "
+                              "so a big backbone can badly overparameterize them against a typically tiny "
+                              "PDF-level training set and collapse training onto predicting the label's "
+                              "marginal frequency regardless of the page. Default: no projection.")
+    parser.add_argument("--doc-classification", choices=["early", "late"], default="late",
+                         help="sequence mode only: how document_type/layout_type/functional_category use "
+                              "document segments - see sequence_model.py's module docstring. Both read the "
+                              "Transformer encoder's contextualized state (a from-scratch feedforward path on "
+                              "the raw embedding alone reliably collapses). 'late' (default): each page "
+                              "classified from its own contextualized state (not pooled with document-mates) - "
+                              "full per-page training signal, merged into a document-level label downstream. "
+                              "'early': the segment's contextualized states are mean-pooled first, one shared "
+                              "input per document - closer to classifying the document once, at the cost of "
+                              "being corrupted outright by a wrong segment boundary rather than contributing "
+                              "just one bad vote.")
+    parser.add_argument("--recompose-passes", type=int, default=0,
+                         help="sequence mode only: also train on this many synthetic PDF sequences per real "
+                              "training PDF, built by regrouping/reordering real, intact documents (not "
+                              "individual pages) rather than using only the real PDF groupings - see "
+                              "recompose_sequences.py. Targets a different bottleneck than augmentation: the "
+                              "Transformer encoder's own weights are shaped by only as many independent "
+                              "sequences as there are real training PDFs, however many labeled pages/documents "
+                              "are packed inside them; this increases how many distinct sequence *compositions* "
+                              "it trains on. Dose-sensitive - confirmed empirically (text embeddings): at 8x the "
+                              "real training PDF count, doctype and start_page both collapsed back to "
+                              "majority-class prediction, most likely from diluting whatever real (if weak) "
+                              "compositional signal exists in actual dossiers under a much larger volume of "
+                              "structurally-random synthetic ones; at 1-3x, doctype improved modestly and "
+                              "start_page did not collapse, but check precision/recall (not just F1) before "
+                              "trusting any start_page change - its class imbalance means F1-for-the-positive-"
+                              "class can rise just from predicting the majority class more often, which looks "
+                              "like improvement but isn't. Start low (1-3) and check val metrics before raising "
+                              "it. 0 = off (default).")
+    parser.add_argument("--recompose-mode", choices=["shuffle", "recombine"], default="recombine",
+                         help="'shuffle': reorders each real PDF's own documents only. 'recombine': pools "
+                              "documents across all real training PDFs and draws new random groupings - "
+                              "combinatorially more distinct sequences. See recompose_sequences.py.")
+    parser.add_argument("--cover-doctype", default="NAA cover",
+                         help="document type always pinned to position 0 of a synthetic sequence, if present "
+                              "(matches a real archival convention: a post-digitisation cover page always "
+                              "starts a dossier, not part of the original document order). Pass '' to disable.")
+
+    parser.add_argument("--loss-weight-start", type=float, default=1.0)
+    parser.add_argument("--loss-weight-doctype", type=float, default=1.0,
+                         help="sequence mode only: the four task losses are summed unweighted by default. "
+                              "document_type's raw loss (36 classes, ~half with under 10 training examples, "
+                              "several with exactly 1) runs ~2x layout/functional's and ~4-5x start's - "
+                              "downweighting it (e.g. 0.3) tests whether that dominance in the shared "
+                              "gradient, not just doctype's own difficulty, is holding the other heads back.")
+    parser.add_argument("--loss-weight-layout", type=float, default=1.0)
+    parser.add_argument("--loss-weight-functional", type=float, default=1.0)
+
+    # Manifest column names (defaults match this project's real annotation schema)
+    parser.add_argument("--pdf-col", default="pdf_name")
+    parser.add_argument("--page-col", default="page_num")
+    parser.add_argument("--image-col", default="img_path")
+    parser.add_argument("--text-source", choices=["pagexml", "markdown"], default="markdown",
+                         help="markdown (default): Qwen2.5-VL markdown-mode OCR output, stripped of markup - see "
+                              "lib/markdown_text.py for why. pagexml: PageXML transcriptions, this project's "
+                              "original text source.")
+    parser.add_argument("--pagexml-col", default="text_path")
+    parser.add_argument("--markdown-col", default="markdown_path", help="only used with --text-source markdown")
+    parser.add_argument("--allow-missing-files", action="store_true",
+                         help="don't error on manifest paths that don't resolve to an existing file - see "
+                              "common.validate_manifest_paths. Off by default: a systematic path mistake here "
+                              "silently produces near-identical embeddings/predictions for every page, not an "
+                              "error, unless caught up front. No effect with --cached-embeddings (no raw files "
+                              "are read there at all).")
+    parser.add_argument("--doctype-col", default="document_type")
+    parser.add_argument("--layout-col", default="layout_type")
+    parser.add_argument("--functional-col", default="functional_category")
+    parser.add_argument("--start-col", default="start_page")
+    parser.add_argument("--split-col", default="split")
+
+    parser.add_argument("--amp", choices=["auto", "on", "off"], default="auto",
+                         help="mixed precision (bf16). auto = on for CUDA, off otherwise")
+    parser.add_argument("--eval-teacher-forced", action="store_true",
+                         help="sequence mode only: also evaluate the test set with ground-truth "
+                              "start-page segmentation (oracle), to check how much self-predicted "
+                              "segmentation is hurting doctype/layout/functional - see module docstring")
+
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--device", default=None)
+    return parser
+
+
+def apply_scenario_preset(args: argparse.Namespace) -> None:
+    preset = dict(PRESETS[args.scenario])
+    if args.mode == "sequence":
+        preset.update(SEQUENCE_MODE_OVERRIDES.get(args.scenario, {}))
+    for key, value in preset.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+
+
+def resolve_targets(args: argparse.Namespace) -> list[str]:
+    if args.target is None:
+        if args.mode == "page":
+            raise SystemExit("--target is required in --mode page (choose exactly one).")
+        args.target = list(TARGET_COLUMN_ARG)
+    if args.mode == "page" and len(args.target) != 1:
+        raise SystemExit(f"--mode page needs exactly one --target, got {args.target}")
+    return args.target
+
+
+def main():
+    args = build_arg_parser().parse_args()
+    apply_scenario_preset(args)
+    targets = resolve_targets(args)
+
+    if args.out_dir is None:
+        args.out_dir = Path("runs") / f"{args.scenario}_{args.mode}_{args.modality}_{'+'.join(targets)}"
+
+    print(f"scenario={args.scenario}  mode={args.mode}  modality={args.modality}  target={targets}")
+
+    if args.cached_embeddings and args.mode != "sequence":
+        raise SystemExit("--cached-embeddings only applies to --mode sequence.")
+    if args.manifest is None and args.cached_embeddings is None:
+        raise SystemExit("--manifest is required (unless --cached-embeddings is set, --mode sequence only).")
+
+    if args.mode == "page":
+        if args.max_pages_per_batch:
+            raise SystemExit("--max-pages-per-batch only applies to --mode sequence (page-mode batches "
+                              "aren't grouped by PDF); use --batch-size instead.")
+        target_column = getattr(args, TARGET_COLUMN_ARG[targets[0]])
+        run_page(args, target_column)
+    else:
+        run_sequence(args, targets)
+
+
+if __name__ == "__main__":
+    main()

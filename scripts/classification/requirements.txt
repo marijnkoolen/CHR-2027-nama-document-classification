@@ -1,0 +1,11 @@
+# Core stack shared by both pipelines under scripts/classification/ - see
+# joint/requirements.txt and sequential/requirements.txt for each pipeline's
+# own additional dependencies (install both files alongside this one).
+torch>=2.2
+torchvision>=0.17
+transformers>=4.40
+scikit-learn>=1.3
+pillow>=10.0
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.8

@@ -1,0 +1,7 @@
+# Also install ../requirements.txt (the shared core stack) alongside this.
+
+# Only needed for the --model yolov8n-cls / yolov8s-cls path in train_efficient.py
+ultralytics>=8.1
+
+# Only needed for train_multimodal.py (XLM-RoBERTa's tokenizer)
+sentencepiece>=0.1.99

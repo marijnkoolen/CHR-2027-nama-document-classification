@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+
+# This repo ships no data - point DATA_ROOT/RUN_DIR at your own corpus,
+# which naturally lives outside this repo. If you keep it inside for
+# convenience, don't let it get tracked.
+/data/
+/runs/

@@ -1,0 +1,371 @@
+<meta charset="utf-8">
+<title>Sequential Pipeline — Evaluation Report</title>
+<style>
+  :root {
+    --paper: #F1F2EF;
+    --paper-raised: #FFFFFF;
+    --ink: #1D2430;
+    --ink-soft: #565D68;
+    --indigo: #34517D;
+    --indigo-soft: #7E92B0;
+    --indigo-wash: #E4E9F0;
+    --brass: #A97A2E;
+    --brass-wash: #F3E7D3;
+    --line: #D7D9D2;
+    --baseline-c: #4C7A73;
+    --sequence-c: #7A5C82;
+    --fusion-c: #8A7A3E;
+    --finetune-c: #6A6F94;
+    --shadow: 0 1px 2px rgba(29,36,48,0.06), 0 4px 16px rgba(29,36,48,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #14181F;
+      --paper-raised: #1B212B;
+      --ink: #E7E8E3;
+      --ink-soft: #9DA3AC;
+      --indigo: #8AA3CC;
+      --indigo-soft: #4A5C7D;
+      --indigo-wash: #212E42;
+      --brass: #D9A24D;
+      --brass-wash: #362A18;
+      --line: #2A2F3A;
+      --baseline-c: #6FA69C;
+      --sequence-c: #A084AA;
+      --fusion-c: #C1A25E;
+      --finetune-c: #9398BE;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14181F; --paper-raised: #1B212B; --ink: #E7E8E3; --ink-soft: #9DA3AC;
+    --indigo: #8AA3CC; --indigo-soft: #4A5C7D; --indigo-wash: #212E42;
+    --brass: #D9A24D; --brass-wash: #362A18; --line: #2A2F3A;
+    --baseline-c: #6FA69C; --sequence-c: #A084AA; --fusion-c: #C1A25E; --finetune-c: #9398BE;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 20px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --paper: #F1F2EF; --paper-raised: #FFFFFF; --ink: #1D2430; --ink-soft: #565D68;
+    --indigo: #34517D; --indigo-soft: #7E92B0; --indigo-wash: #E4E9F0;
+    --brass: #A97A2E; --brass-wash: #F3E7D3; --line: #D7D9D2;
+    --baseline-c: #4C7A73; --sequence-c: #7A5C82; --fusion-c: #8A7A3E; --finetune-c: #6A6F94;
+    --shadow: 0 1px 2px rgba(29,36,48,0.06), 0 4px 16px rgba(29,36,48,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+
+  h1, h2, h3 {
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+    font-weight: 600;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", monospace; font-variant-numeric: tabular-nums; }
+
+  /* ---------- header ---------- */
+  header { margin-bottom: 2.75rem; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--indigo); font-weight: 600; margin-bottom: 0.6rem;
+  }
+  h1 { font-size: 2.1rem; color: var(--ink); margin-bottom: 0.5rem; }
+  .subtitle { color: var(--ink-soft); font-size: 1rem; max-width: 62ch; margin-bottom: 1.5rem; }
+  .stat-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .stat-chip {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px;
+    padding: 0.65rem 1rem; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 0.15rem; min-width: 8.5rem;
+  }
+  .stat-chip .num { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-chip .label { font-size: 0.72rem; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* ---------- section shell ---------- */
+  section { margin-bottom: 3rem; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .section-head h2 { font-size: 1.35rem; }
+  .section-note { color: var(--ink-soft); font-size: 0.88rem; }
+
+  /* ---------- leaderboard grid ---------- */
+  .board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 860px) { .board-grid { grid-template-columns: 1fr; } }
+
+  .board {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 12px;
+    padding: 1.25rem 1.25rem 0.75rem; box-shadow: var(--shadow);
+  }
+  .board-title { font-size: 1.05rem; margin-bottom: 0.2rem; }
+  .board-sub { font-size: 0.8rem; color: var(--ink-soft); margin-bottom: 0.9rem; }
+
+  .tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
+  .tab {
+    font-size: 0.74rem; font-weight: 600; letter-spacing: 0.02em;
+    padding: 0.3rem 0.65rem; border-radius: 999px; border: 1px solid var(--line);
+    background: transparent; color: var(--ink-soft); cursor: pointer;
+    font-family: inherit;
+  }
+  .tab[aria-pressed="true"] { background: var(--indigo); border-color: var(--indigo); color: var(--paper-raised); }
+  .tab:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 1.6rem minmax(0,1fr) 5.2rem 3.6rem;
+    align-items: center; gap: 0.6rem;
+    padding: 0.44rem 0; border-top: 1px solid var(--line);
+  }
+  .row:first-of-type { border-top: none; }
+  .row.hidden { display: none; }
+  .rank { font-size: 0.76rem; color: var(--ink-soft); font-family: ui-monospace, monospace; }
+  .row.top .rank { color: var(--brass); font-weight: 700; }
+
+  .model-cell { min-width: 0; }
+  .model-name { font-size: 0.86rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .model-meta { display: flex; gap: 0.35rem; align-items: center; margin-top: 0.18rem; flex-wrap: wrap; }
+  .pill {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    padding: 0.08rem 0.4rem; border-radius: 4px; color: var(--paper-raised);
+    white-space: nowrap;
+  }
+  .backbone-tag { font-size: 0.72rem; color: var(--ink-soft); white-space: nowrap; }
+
+  .bar-cell { position: relative; height: 0.55rem; border-radius: 3px; background: var(--indigo-wash); overflow: hidden; }
+  .bar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--indigo); }
+  .row.top .bar-fill { background: var(--brass); }
+
+  .score { font-size: 0.82rem; font-weight: 600; text-align: right; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  /* ---------- pipeline table ---------- */
+  .pipeline-wrap { overflow-x: auto; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  table.pipeline { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 0.85rem; }
+  table.pipeline th, table.pipeline td { padding: 0.6rem 0.85rem; text-align: left; border-top: 1px solid var(--line); white-space: nowrap; }
+  table.pipeline thead th {
+    border-top: none; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--ink-soft); font-weight: 600; padding-bottom: 0.5rem; line-height: 1.5;
+  }
+  .th-sub { font-size: 0.62rem; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--indigo-soft); }
+  table.pipeline td.num { font-family: ui-monospace, monospace; text-align: right; font-variant-numeric: tabular-nums; }
+  .sub-metric { display: block; font-size: 0.72rem; color: var(--ink-soft); font-weight: 400; margin-top: 0.1rem; }
+  table.pipeline tbody tr.winner { background: var(--brass-wash); }
+  table.pipeline tbody tr.winner td:first-child { position: relative; }
+  .win-badge {
+    display: inline-block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    color: var(--brass); border: 1px solid var(--brass); border-radius: 4px; padding: 0.04rem 0.35rem; margin-left: 0.5rem;
+  }
+  .pair-model { font-weight: 600; }
+  .pair-arrow { color: var(--ink-soft); margin: 0 0.35rem; }
+
+  /* ---------- notes ---------- */
+  .notes {
+    border-top: 1px solid var(--line); padding-top: 1.5rem; color: var(--ink-soft); font-size: 0.85rem;
+  }
+  .notes h3 { font-size: 0.95rem; color: var(--ink); margin-bottom: 0.6rem; }
+  .notes ul { margin: 0; padding-left: 1.2rem; }
+  .notes li { margin-bottom: 0.45rem; }
+  .notes code { font-family: ui-monospace, monospace; font-size: 0.82em; background: var(--indigo-wash); padding: 0.05rem 0.3rem; border-radius: 3px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Migration Dossiers · Sequential Classification Pipeline</div>
+    <h1>Model Evaluation Report</h1>
+    <p class="subtitle">Every trained checkpoint — baseline, sequence, fusion and finetune regimes, six backbones, two tasks — scored on the held-out test split, plus the best start_page → document_type pipeline combinations.</p>
+    <div class="stat-row">
+      <div class="stat-chip"><span class="num mono" id="stat-start-n">–</span><span class="label">start_page models</span></div>
+      <div class="stat-chip"><span class="num mono" id="stat-doc-n">–</span><span class="label">doc_type models</span></div>
+      <div class="stat-chip"><span class="num mono">338</span><span class="label">test pages</span></div>
+      <div class="stat-chip"><span class="num mono">1,717 / 367</span><span class="label">train / val pages</span></div>
+    </div>
+  </header>
+
+  <section>
+    <div class="section-head">
+      <h2>Per-task leaderboards</h2>
+      <div class="section-note">Ranked by macro F1 · filter by training regime</div>
+    </div>
+    <div class="board-grid">
+      <div class="board">
+        <div class="board-title">start_page</div>
+        <div class="board-sub">binary — is this page the first page of a document?</div>
+        <div class="tabs" data-board="start_page"></div>
+        <div class="rows" id="rows-start_page"></div>
+      </div>
+      <div class="board">
+        <div class="board-title">doc_type</div>
+        <div class="board-sub">multi-class — document type, start pages only</div>
+        <div class="tabs" data-board="doc_type"></div>
+        <div class="rows" id="rows-doc_type"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Best pipeline combinations</h2>
+      <div class="section-note">Top 3 start_page × 5 doc_type models (3 standalone leaders + 2 late-fusion candidates competitive enough standalone to be worth checking end-to-end), chained and scored end-to-end · ranked by LAS</div>
+    </div>
+    <div class="pipeline-wrap">
+      <table class="pipeline">
+        <thead>
+          <tr>
+            <th>Pipeline (start_page → doc_type)</th>
+            <th>start F1<br><span class="th-sub">macro, both classes</span></th>
+            <th>doc macro F1<br><span class="th-sub">every true start page</span></th>
+            <th>PQ</th>
+            <th>UAS</th>
+            <th>LAS</th>
+          </tr>
+        </thead>
+        <tbody id="pipeline-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="notes">
+    <h3>Methodology &amp; notes</h3>
+    <ul>
+      <li>Every score on this page is <strong>macro-averaged and end-to-end</strong> — <strong>start F1</strong> is the mean of both classes' F1 (start + not-start), matching the standalone start_page leaderboard's own macro F1; <strong>doc macro F1</strong> is scored over every true start page in the test set, matching the standalone doc_type leaderboard's own denominator — a page whose start wasn't detected counts as wrong, not as excluded. Positive-class-only F1 (start_page's binary "start"-class-only score) and document_type accuracy/F1 conditioned on the start_page model having actually detected the page are deliberately not reported anywhere in this report: both silently score an easier, differently-scoped question than the real inference task, and have been mistaken downstream for the honest number — including for document-type count corrections across the full corpus, which is not a valid use of either.</li>
+      <li><strong>PQ</strong> (panoptic quality), <strong>UAS</strong> (unlabeled attachment score) and <strong>LAS</strong> (labeled attachment score) treat each dossier as a sequence of document segments: PQ scores how well predicted segment boundaries match ground truth, UAS whether pages are grouped into the right segments regardless of label, LAS whether they're grouped <em>and</em> correctly typed.</li>
+      <li>All models were trained and evaluated on <code>--device cpu</code> throughout — MPS was avoided for its known correctness issues (silent NaNs, collapsed training) in the PyTorch versions this project uses.</li>
+      <li>The four vision finetune checkpoints (<code>vgg16-ft</code>, <code>efficientnet-ft</code>, <code>facebook__dinov2-small-ft</code>, <code>microsoft__dit-large-finetuned-rvlcdip-ft</code>) needed a separate evaluation pass, run from a terminal with full filesystem access — the automated evaluation environment used for everything else hit an OS-level permission restriction reading raw page images directly (cache-based models were unaffected).</li>
+      <li>None of the top-3 models per task use the finetune-image regime, so the pipeline combinations above aren't affected by that gap.</li>
+      <li><strong>Late fusion</strong> (averaging two independently fine-tuned models' softmax outputs, no training or architecture of its own) scores competitively on the standalone doc_type leaderboard — <code>late-fusion-efficientnet_b0+bert-base-uncased</code> comes within 0.0004 macro F1 of the standalone leader — and, once given genuine re-inference support (reloading its two constituent finetune checkpoints and running them on whatever page subset a pipeline run needs, rather than reusing their original test-set predictions), it turns out to <strong>win outright</strong>: <code>knn-dinov2+mpnet → late-fusion-efficientnet_b0+bert-base-uncased</code> is the best pipeline combination overall (LAS 0.9527), ahead of the previous best (LAS 0.9497) paired with the standalone-leaderboard's #4 model, <code>bert-ft-bert-base-uncased</code>. The same start_page-noise effect that let a modest standalone doc_type model win the original pipeline sweep applies here too.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+const DATA = __REPORT_DATA_JSON__;
+const REGIME_LABEL = { baseline: "Baseline", sequence: "Sequence", fusion: "Fusion", finetune: "Finetune" };
+const REGIME_VAR = { baseline: "--baseline-c", sequence: "--sequence-c", fusion: "--fusion-c", finetune: "--finetune-c" };
+
+function renderBoard(key, rows) {
+  const maxF1 = Math.max(...rows.map(r => r.macro_f1));
+  const regimesPresent = [...new Set(rows.map(r => r.regime))];
+
+  const tabsEl = document.querySelector(`.tabs[data-board="${key}"]`);
+  const allTab = mkTab("All", true);
+  tabsEl.appendChild(allTab);
+  regimesPresent.forEach(rg => tabsEl.appendChild(mkTab(REGIME_LABEL[rg] || rg, false, rg)));
+
+  const rowsEl = document.getElementById(`rows-${key}`);
+  rows.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.className = "row" + (i < 3 ? " top" : "");
+    row.dataset.regime = r.regime;
+
+    const rank = document.createElement("div");
+    rank.className = "rank mono";
+    rank.textContent = "#" + (i + 1);
+
+    const modelCell = document.createElement("div");
+    modelCell.className = "model-cell";
+    const name = document.createElement("div");
+    name.className = "model-name";
+    name.textContent = r.algo + (r.backbones.length > 1 ? " · " + r.backbones.join(" + ") : "");
+    name.title = r.model;
+    const meta = document.createElement("div");
+    meta.className = "model-meta";
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.style.background = `var(${REGIME_VAR[r.regime]})`;
+    pill.textContent = REGIME_LABEL[r.regime] || r.regime;
+    meta.appendChild(pill);
+    if (r.backbones.length === 1) {
+      const tag = document.createElement("span");
+      tag.className = "backbone-tag";
+      tag.textContent = r.backbones[0];
+      meta.appendChild(tag);
+    }
+    modelCell.appendChild(name);
+    modelCell.appendChild(meta);
+
+    const barCell = document.createElement("div");
+    barCell.className = "bar-cell";
+    const fill = document.createElement("div");
+    fill.className = "bar-fill";
+    fill.style.width = (r.macro_f1 / maxF1 * 100).toFixed(1) + "%";
+    barCell.appendChild(fill);
+
+    const score = document.createElement("div");
+    score.className = "score mono";
+    score.textContent = r.macro_f1.toFixed(3);
+
+    row.appendChild(rank);
+    row.appendChild(modelCell);
+    row.appendChild(barCell);
+    row.appendChild(score);
+    rowsEl.appendChild(row);
+  });
+
+  tabsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab");
+    if (!btn) return;
+    [...tabsEl.querySelectorAll(".tab")].forEach(t => t.setAttribute("aria-pressed", "false"));
+    btn.setAttribute("aria-pressed", "true");
+    const filter = btn.dataset.regime || null;
+    [...rowsEl.querySelectorAll(".row")].forEach(row => {
+      row.classList.toggle("hidden", filter && row.dataset.regime !== filter);
+    });
+  });
+
+  function mkTab(label, pressed, regime) {
+    const b = document.createElement("button");
+    b.className = "tab";
+    b.type = "button";
+    b.textContent = label;
+    b.setAttribute("aria-pressed", pressed ? "true" : "false");
+    if (regime) b.dataset.regime = regime;
+    return b;
+  }
+}
+
+function shortName(modelId, lookupRows) {
+  const hit = lookupRows.find(r => r.model === modelId);
+  if (!hit) return modelId;
+  return hit.algo + (hit.backbones.length ? " (" + hit.backbones.join(" + ") + ")" : "");
+}
+
+function renderPipeline(rows) {
+  const tbody = document.getElementById("pipeline-body");
+  rows.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    if (i === 0) tr.className = "winner";
+    const pairTd = document.createElement("td");
+    pairTd.innerHTML =
+      `<span class="pair-model">${shortName(r.start_model, DATA.start_page)}</span><span class="pair-arrow">→</span><span class="pair-model">${shortName(r.doc_model, DATA.doc_type)}</span>` +
+      (i === 0 ? `<span class="win-badge">Best</span>` : "");
+    tr.appendChild(pairTd);
+
+    const startTd = document.createElement("td");
+    startTd.className = "num";
+    startTd.textContent = r.start_macro_f1.toFixed(3);
+    tr.appendChild(startTd);
+
+    const docTd = document.createElement("td");
+    docTd.className = "num";
+    docTd.textContent = r.doc_macro_f1_e2e.toFixed(3);
+    tr.appendChild(docTd);
+
+    [r.pq, r.uas, r.las].forEach(v => {
+      const td = document.createElement("td");
+      td.className = "num";
+      td.textContent = v.toFixed(3);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById("stat-start-n").textContent = DATA.start_page.length;
+document.getElementById("stat-doc-n").textContent = DATA.doc_type.length;
+renderBoard("start_page", DATA.start_page);
+renderBoard("doc_type", DATA.doc_type);
+renderPipeline(DATA.pipeline);
+</script>

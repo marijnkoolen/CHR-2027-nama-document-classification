@@ -1,0 +1,4 @@
+# Also install ../requirements.txt (the shared core stack) alongside this.
+xgboost>=2.0
+markdown>=3.4
+beautifulsoup4>=4.12
