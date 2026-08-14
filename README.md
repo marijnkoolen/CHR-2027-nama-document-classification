@@ -25,7 +25,9 @@ features, an LSTM over a document's page sequence, early/late multimodal
 fusion, and end-to-end finetuning), across configurable vision and text
 backbones, chained into a two-stage pipeline: predict start_page over every
 page, then predict document_type only on the pages flagged as document
-heads. See `runs/per_task/eval_report.html` for this project's own results.
+heads. See [`runs/per_task/eval_report.md`](runs/per_task/eval_report.md)
+(or `eval_report.html` for the interactive version) for this project's own
+results.
 
 ## Setup
 
@@ -72,8 +74,8 @@ ship.
 5. `make predict-corpus` - run a chosen pipeline combination over an
    unlabeled corpus (`START_MODEL`/`DOC_MODEL`/`MANIFEST`/`IMAGE_ROOT`/
    `CACHE_DIR`/`PREDICT_OUT` - see the Makefile).
-6. `make report` - build `eval_report.html` from whatever's under
-   `RUN_DIR`.
+6. `make report` - build `eval_report.html` (and its markdown sibling
+   `eval_report.md`) from whatever's under `RUN_DIR`.
 
 `make all` runs stages 1-4.
 
@@ -108,8 +110,10 @@ scripts/dossier_composition/, scripts/dossier_size_model/
   dossier; Bayesian modelling of dossier size, doc-type counts, and their
   temporal trends). Each has its own Makefile (`make help` inside either
   directory). Outputs land in data/dossier_composition/,
-  data/dossier_size_model/ - see "What's not here" below for what's
-  excluded from those.
+  data/dossier_size_model/ - see their `REPORT.md`/`report.md` for the
+  full narrative write-up (or `report.html` for the same content with
+  interactive plots), and "What's not here" below for what's excluded
+  from those directories.
 scripts/labels/
   Annotation label merging/splitting: merge_annotations.py combines raw
   per-annotator exports, merge_rare_doctypes.py folds low-count document
@@ -125,10 +129,11 @@ scripts/ocr/
 docs/model_equations.tex
   The Bayesian model specifications behind dossier_size_model/'s analyses.
 runs/per_task/
-  Evaluation results: eval_report.html, model_tables.tex, and per-model/
-  per-pipeline-combination metrics.json/per_class_metrics/confusion
-  matrices - the classification pipeline's actual results on this
-  project's data, not a synthetic example run.
+  Evaluation results: eval_report.html (and its markdown sibling
+  eval_report.md, for reading the same leaderboards directly on GitHub),
+  model_tables.tex, and per-model/per-pipeline-combination metrics.json/
+  per_class_metrics/confusion matrices - the classification pipeline's
+  actual results on this project's data, not a synthetic example run.
 data/labels/dossier_labels_merged_pdf12_stratified.tsv
   The anonymised ground-truth labels (start_page/document_type per page)
   this project's classification results were trained/evaluated on. Dossier
