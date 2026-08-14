@@ -30,6 +30,7 @@ PY := cd $(ROOT_DIR) && python3
 	doc_types_count_vs_presence \
 	doc_type_period_diff report \
 	doc_type_uncertainty_point doc_type_uncertainty_pool doc_type_period_diff_uncertainty \
+	doc_type_period_diff_mi \
 	aggregate_uncertainty
 
 help:
@@ -49,13 +50,16 @@ help:
 	@echo "  doc_type_uncertainty_point         ~25 min, CPU  bias-corrected point estimate (both doc-type analyses)"
 	@echo "  doc_type_period_diff_uncertainty   ~5s           point-corrected pre/post-1956 diff, depends on doc_type_uncertainty_point"
 	@echo "  doc_type_uncertainty_pool          fast          pool GPU-box multiple-imputation results after copying them back"
+	@echo "  doc_type_period_diff_mi            ~10s          full-MI pre/post-1956 diff, depends on doc_type_uncertainty_pool"
 	@echo "  aggregate_uncertainty              ~2 min, CPU   segmentation-only correction for the AGGREGATE num_docs models"
 	@echo "  Full multiple-imputation run (doc-type analyses) is GPU-only and sharded across 2 processes -- not a single"
 	@echo "  make target, see doc_type_three_groups_uncertainty.py / doc_type_count_vs_presence_uncertainty.py docstrings"
 	@echo "  for the exact commands to run on the GPU box. aggregate_uncertainty has no mi/GPU mode (point only)."
 	@echo ""
-	@echo "  report now depends on doc_type_uncertainty_point, doc_type_period_diff_uncertainty, and aggregate_uncertainty"
-	@echo "  too (build_report.py's sect;3/6/7 read their output) -- 'make all' picks these up automatically."
+	@echo "  report now depends on doc_type_uncertainty_point, doc_type_period_diff_uncertainty, aggregate_uncertainty,"
+	@echo "  doc_type_uncertainty_pool, and doc_type_period_diff_mi too (build_report.py's sect;3/6/7 read their output)"
+	@echo "  -- 'make all'/'make report' will fail on a clean checkout until the GPU --mode mi step has been run at least"
+	@echo "  once and its output copied into data/dossier_size_model/uncertainty/ (see doc_type_uncertainty_pool above)."
 
 all: report
 
@@ -109,7 +113,8 @@ doc_type_period_diff: doc_types_three_groups
 
 report: dossier_size_plot doc_types_plot dossier_size_temporal_plot family_size_temporal_plot \
 	adults_binomial_plot three_groups_plot doc_types_three_groups_plot doc_types_count_vs_presence \
-	doc_type_period_diff doc_type_uncertainty_point doc_type_period_diff_uncertainty aggregate_uncertainty
+	doc_type_period_diff doc_type_uncertainty_point doc_type_period_diff_uncertainty aggregate_uncertainty \
+	doc_type_uncertainty_pool doc_type_period_diff_mi
 	$(PY) scripts/dossier_size_model/build_report.py
 
 # Classifier-uncertainty correction for the two doc-type analyses (see
@@ -123,9 +128,20 @@ doc_type_uncertainty_point:
 doc_type_period_diff_uncertainty: doc_type_uncertainty_point
 	$(PY) scripts/dossier_size_model/doc_type_period_diff_uncertainty.py
 
+# GPU-only step (see doc_type_three_groups_uncertainty.py's docstring for the
+# remote A10 invocations) -- run --mode mi on the GPU box, rsync the
+# idata_mi_joint_*.nc / cvp_mi_joint_*.csv files it writes back into
+# data/dossier_size_model/uncertainty/, THEN run these two targets locally.
+# `report` depends on both, so a fresh `make report`/`make all` will fail
+# with a missing-file error until that GPU step has been run at least once
+# and its output copied back -- expected, not a bug: there is no local-only
+# way to produce the full-MI results.
 doc_type_uncertainty_pool:
 	$(PY) scripts/dossier_size_model/doc_type_three_groups_uncertainty.py --mode pool --n-imputations $(N_IMPUTATIONS)
 	$(PY) scripts/dossier_size_model/doc_type_count_vs_presence_uncertainty.py --mode pool --n-imputations $(N_IMPUTATIONS)
+
+doc_type_period_diff_mi: doc_type_uncertainty_pool
+	$(PY) scripts/dossier_size_model/doc_type_period_diff_mi.py
 
 # Segmentation-only classifier-uncertainty correction for the AGGREGATE
 # num_docs models (three_groups, dossier_size_temporal) -- see

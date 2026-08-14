@@ -148,6 +148,23 @@ def count_vs_presence_table(df: pd.DataFrame) -> str:
                         "SE of diff", "Winner"], rows, "data-table wide")
 
 
+def count_vs_presence_mi_table(df: pd.DataFrame) -> str:
+    """cvp_mi_joint_pooled.csv has a different schema than the raw/point cvp
+    tables: pooled ACROSS imputations rather than a single count/presence
+    elpd pair, so it's summarized as a mean + across-imputation SD of the
+    elpd difference, plus how often presence won, rather than one elpd_count/
+    elpd_presence/se_diff/winner row."""
+    df = df.sort_values("elpd_diff_mean", ascending=False)
+    rows = []
+    for _, r in df.iterrows():
+        rows.append([
+            r["doc_type"], int(r["n_imputations_pooled"]), fmt(r["elpd_diff_mean"], 2),
+            fmt(r["elpd_diff_sd_across_imputations"], 2), fmt_pct(r["frac_presence_wins"] * 100, 0),
+        ])
+    return table_html(["Document type", "Imputations", "elpd diff (presence-count), mean",
+                        "SD across imputations", "% imputations favoring presence"], rows, "data-table wide")
+
+
 def main():
     occ_2g = pd.read_csv(OUT / "doc_type_effects_summary.csv")
     cvp = pd.read_csv(OUT / "doc_type_count_vs_presence_comparison.csv")
@@ -317,6 +334,84 @@ def main():
     else:
         shrink_synthesis_phrase = "the per-document-type pre-adult shrinkage seen in the raw fit does not survive correction"
 
+    # --- Full multiple-imputation results (GPU): doc_type_three_groups_uncertainty.py
+    # --mode mi + --mode pool, doc_type_count_vs_presence_uncertainty.py --mode mi +
+    # --mode pool, doc_type_period_diff_mi.py -- the rigorous counterpart to the
+    # point-mode block above, propagating both confusion matrices' own posterior
+    # uncertainty (not just their posterior mean), at GPU-scale compute (20
+    # imputations x 3 periods, run on a remote A10 box).
+    mi_full = pd.read_csv(UNC / "mi_joint_pooled_full.csv")
+    mi_pre = pd.read_csv(UNC / "mi_joint_pooled_pre1956.csv")
+    mi_post = pd.read_csv(UNC / "mi_joint_pooled_post1956.csv")
+    mi_period_diff = pd.read_csv(UNC / "mi_joint_period_diff.csv")
+    cvp_mi = pd.read_csv(UNC / "cvp_mi_joint_pooled.csv")
+
+    shrink_types_mi = mi_period_diff.loc[mi_period_diff["p_post_lt_pre"] >= 0.95, "doc_type"].tolist()
+    grow_types_mi = mi_period_diff.loc[mi_period_diff["p_post_lt_pre"] <= 0.05, "doc_type"].tolist()
+    n_credible_diff_mi = len(shrink_types_mi)
+    n_credible_grow_mi = len(grow_types_mi)
+    shrink_types_mi_str = " and ".join(shrink_types_mi) if shrink_types_mi else "none"
+    grow_types_mi_str = " and ".join(grow_types_mi) if grow_types_mi else "none"
+
+    # shrink-set comparison, point-mode -> full MI
+    if set(shrink_types_point) == set(shrink_types_mi) and shrink_types_mi:
+        mi_shrink_narrative = (
+            f"<strong>{shrink_types_mi_str}</strong> remains the only type whose pre-adult effect credibly "
+            f"shrinks after 1956 under the full, rigorous multiple-imputation treatment &mdash; the point "
+            f"estimate above wasn't hiding anything an honest interval would have caught."
+        )
+    else:
+        kept_mi = sorted(set(shrink_types_point) & set(shrink_types_mi))
+        dropped_mi = sorted(set(shrink_types_point) - set(shrink_types_mi))
+        new_mi = sorted(set(shrink_types_mi) - set(shrink_types_point))
+        mi_shrink_narrative = (
+            f"Of the point-corrected credible type{'s' if len(shrink_types_point) != 1 else ''} "
+            f"({shrink_types_point_str}), <strong>{' and '.join(kept_mi) if kept_mi else 'none'}</strong> "
+            f"remain{'s' if len(kept_mi) == 1 else ''} credible under full MI"
+            + (f"; <strong>{' and '.join(dropped_mi)}</strong> do{'es' if len(dropped_mi) == 1 else ''} not"
+               if dropped_mi else "")
+            + "."
+        )
+        if new_mi:
+            mi_shrink_narrative += f" <strong>{' and '.join(new_mi)}</strong> newly becomes credible under full MI."
+
+    # grow-set comparison, point-mode -> full MI -- this is the one that actually
+    # moves: D.2's point-mode "credible increase" does not survive full MI
+    # (P(shrinks) rises from a point-mode 0.01-0.02 to 0.26 -- nowhere near
+    # either 0.95 or 0.05 threshold once the classifiers' own uncertainty, not
+    # just their point-estimate bias, is propagated).
+    if set(grow_types_point) == set(grow_types_mi):
+        if grow_types_mi:
+            mi_grow_narrative = (
+                f"<strong>{grow_types_mi_str}</strong>'s credible increase also holds up under full MI."
+            )
+        else:
+            mi_grow_narrative = "No type shows a credible increase under either point-mode or full MI correction."
+    else:
+        lost_grow = sorted(set(grow_types_point) - set(grow_types_mi))
+        kept_grow = sorted(set(grow_types_point) & set(grow_types_mi))
+        mi_grow_narrative = (
+            f"<strong>{' and '.join(lost_grow) if lost_grow else 'none'}</strong>'s point-mode credible "
+            f"increase does{'' if lost_grow else ' still'} not survive full MI"
+            + (f" (P(shrinks) moves to {fmt_pct(mi_period_diff.loc[mi_period_diff['doc_type']==lost_grow[0],'p_post_lt_pre'].item()*100,1)}, "
+               f"nowhere near either credibility threshold)" if lost_grow else "")
+            + " -- point-mode intervals understate classifier uncertainty by construction (see &sect;10), "
+              "and this is a case where that gap actually changes the verdict, not just its width."
+        )
+        if kept_grow:
+            mi_grow_narrative += f" <strong>{' and '.join(kept_grow)}</strong>'s increase does hold up."
+
+    # short version of the grow-side finding for the §9 synthesis bullet
+    if grow_types_mi:
+        grow_synthesis_phrase = f"{grow_types_mi_str}'s credible increase for pre-adults holds up under full MI too"
+    elif grow_types_point:
+        grow_synthesis_phrase = (
+            f"{' and '.join(grow_types_point)}'s apparent credible increase for pre-adults (point estimate) "
+            f"does not survive the full multiple-imputation treatment"
+        )
+    else:
+        grow_synthesis_phrase = "no type shows a credible increase for pre-adults under any correction"
+
     html = f"""<title>Dossier Size &amp; Family Composition Analysis</title>
 <style>
 :root {{
@@ -423,7 +518,7 @@ footer code {{ display: block; background: var(--surface); border: 1px solid var
   <h1>What predicts dossier size, and a correction along the way</h1>
   <p class="subtitle">A family of Bayesian models across 1,307 dossiers (1952&ndash;1965) tracing whether unit composition and time predict dossier size, plus a classifier-uncertainty recheck &mdash; including an initial finding that a later domain-expert conversation overturned, kept visible deliberately.</p>
   <div class="status-banner">
-    This report documents the full investigative arc as it happened, not just the final answer &mdash; &sect;1&ndash;2 are <strong>superseded</strong> by &sect;6&ndash;7 (and, on predictive grounds rather than a data bug, by &sect;8's grid). &sect;3, &sect;6, and &sect;7 additionally carry a classifier-uncertainty check (point estimate, see &sect;10): the aggregate findings hold up essentially unchanged, the per-document-type story in &sect;7 narrows. Regenerate end to end with <code>make -C scripts/dossier_size_model all</code> (~1.5&ndash;2 hours; individual targets in <code>make help</code>); the uncertainty check is a separate step, <code>python3 scripts/dossier_size_model/aggregate_uncertainty.py</code>.
+    This report documents the full investigative arc as it happened, not just the final answer &mdash; &sect;1&ndash;2 are <strong>superseded</strong> by &sect;6&ndash;7 (and, on predictive grounds rather than a data bug, by &sect;8's grid). &sect;3, &sect;6, and &sect;7 additionally carry a classifier-uncertainty check (point estimate for &sect;3/&sect;6; both point estimate and full GPU multiple imputation for &sect;7, see &sect;10): the aggregate findings hold up essentially unchanged, the per-document-type story in &sect;7 narrows, and point-mode/full-MI disagree on one type (D.2) -- see &sect;7 for which reading to trust. Regenerate end to end with <code>make -C scripts/dossier_size_model all</code> (~1.5&ndash;2 hours; individual targets in <code>make help</code>); the uncertainty check is a separate step, <code>python3 scripts/dossier_size_model/aggregate_uncertainty.py</code> (point estimate) plus <code>doc_type_three_groups_uncertainty.py --mode mi</code> (GPU, full MI).
   </div>
   <div class="timeline">
     <div><strong>&sect;1&ndash;2</strong> originally: num_adults defined by an era-switching 18+/16+ threshold &rarr; "adult effect shrinks after 1956" (data bug, since fixed; refit here on corrected data)</div>
@@ -565,17 +660,26 @@ footer code {{ display: block; background: var(--surface); border: 1px solid var
     <details><summary>Post-1956 ({n_doc_types} types)</summary>{doc_type_3group_table(doc3_post)}</details>
     <details><summary>Pre/post-1956 paired difference, pre-adult effect ({n_credible_diff}/{n_doc_types} credible)</summary>{period_diff_table(period_diff)}</details>
     <h3>Classifier-uncertainty-corrected version (point estimate)</h3>
-    <p>Everything above uses raw predicted counts, which assume both classifiers (document-type and start_page) are ground truth. Refit with each dossier's per-type counts jointly corrected for document-type confusion and segmentation uncertainty (doc_type_three_groups_uncertainty.py <code>--mode point</code>, deconvolving via each confusion matrix's posterior mean &mdash; corrects the average bias, but not a full multiple-imputation treatment of the classifiers' own posterior uncertainty; see that script's docstring for the rigorous <code>--mode mi</code> GPU path).</p>
-    <p>{shrink_narrative} Separately, <strong>{grow_types_point_str}</strong> newly shows a <em>credible increase</em> (P(grows) = {fmt_pct((1-point_period_diff.loc[point_period_diff['doc_type']==grow_types_point[0],'p_post_lt_pre'].item())*100,1)}) once corrected &mdash; not credible in the raw fit &mdash; consistent with the revised domain-expert account that officers leaned on D.2 (among others) for pre-adults, and did so increasingly after 1956.</p>
+    <p>Everything above uses raw predicted counts, which assume both classifiers (document-type and start_page) are ground truth. Refit with each dossier's per-type counts jointly corrected for document-type confusion and segmentation uncertainty (doc_type_three_groups_uncertainty.py <code>--mode point</code>, deconvolving via each confusion matrix's posterior mean &mdash; corrects the average bias, but not a full multiple-imputation treatment of the classifiers' own posterior uncertainty; see below for the rigorous <code>--mode mi</code> GPU version).</p>
+    <p>{shrink_narrative} Separately, <strong>{grow_types_point_str}</strong> newly shows a <em>credible increase</em> (P(grows) = {fmt_pct((1-point_period_diff.loc[point_period_diff['doc_type']==grow_types_point[0],'p_post_lt_pre'].item())*100,1)}) once corrected &mdash; not credible in the raw fit &mdash; consistent with the revised domain-expert account that officers leaned on D.2 (among others) for pre-adults, and did so increasingly after 1956. (This point-mode reading of D.2 doesn't survive the rigorous version below -- see there.)</p>
     <details><summary>Full period, corrected ({n_doc_types} types)</summary>{doc_type_3group_table(point_full)}</details>
     <details><summary>Pre-1956, corrected ({n_doc_types} types)</summary>{doc_type_3group_table(point_pre)}</details>
     <details><summary>Post-1956, corrected ({n_doc_types} types)</summary>{doc_type_3group_table(point_post)}</details>
     <details><summary>Pre/post-1956 paired difference, corrected ({n_credible_diff_point}/{n_doc_types} credible shrink, {n_credible_grow_point}/{n_doc_types} credible grow)</summary>{period_diff_table(point_period_diff)}</details>
+    <h3>Classifier-uncertainty-corrected version (full multiple imputation)</h3>
+    <p>The rigorous version: 20 imputations per period, each jointly resampling both confusion matrices from their own posteriors (not just deconvolving via the posterior mean) and refitting the three-group model from scratch, pooled per Rubin's rules (doc_type_three_groups_uncertainty.py <code>--mode mi</code>, GPU-fit on a remote A10 box, ~20 imputations &times; 3 periods). This propagates the classifiers' own posterior uncertainty on top of the point-estimate bias correction above, so its intervals are the honest ones.</p>
+    <p>{mi_shrink_narrative} {mi_grow_narrative}</p>
+    <details><summary>Full period, full MI ({n_doc_types} types)</summary>{doc_type_3group_table(mi_full)}</details>
+    <details><summary>Pre-1956, full MI ({n_doc_types} types)</summary>{doc_type_3group_table(mi_pre)}</details>
+    <details><summary>Post-1956, full MI ({n_doc_types} types)</summary>{doc_type_3group_table(mi_post)}</details>
+    <details><summary>Pre/post-1956 paired difference, full MI ({n_credible_diff_mi}/{n_doc_types} credible shrink, {n_credible_grow_mi}/{n_doc_types} credible grow)</summary>{period_diff_table(mi_period_diff)}</details>
     <h3>Count vs. presence specification check</h3>
     <p>For each type, is the pre-adult predictor better modeled as a linear count (each extra pre-adult adds more documents) or presence/absence (the form is filed once, or not, regardless of count)? Every difference is small relative to its standard error (largest: D.2, favoring count by {fmt(cvp.loc[cvp['doc_type']=='D.2','elpd_diff_presence_minus_count'].item(),1)} elpd, se {fmt(cvp.loc[cvp['doc_type']=='D.2','se_diff'].item(),1)}, ~1.6 SE) &mdash; not decisive for any type, and doesn't explain the mismatch above.</p>
     <details><summary>Full table ({n_doc_types} types)</summary>{count_vs_presence_table(cvp)}</details>
-    <p>Rerun on the classifier-uncertainty-corrected counts: still not decisive for any type (largest: {cvp_point.loc[cvp_point['elpd_diff_presence_minus_count'].abs().idxmax(),'doc_type']}, {fmt(cvp_point['elpd_diff_presence_minus_count'].abs().max()/cvp_point.loc[cvp_point['elpd_diff_presence_minus_count'].abs().idxmax(),'se_diff'],1)} SE) &mdash; the correction doesn't surface a count-vs-presence distinction the raw fit missed.</p>
+    <p>Rerun on the classifier-uncertainty-corrected counts (point estimate): still not decisive for any type (largest: {cvp_point.loc[cvp_point['elpd_diff_presence_minus_count'].abs().idxmax(),'doc_type']}, {fmt(cvp_point['elpd_diff_presence_minus_count'].abs().max()/cvp_point.loc[cvp_point['elpd_diff_presence_minus_count'].abs().idxmax(),'se_diff'],1)} SE) &mdash; the correction doesn't surface a count-vs-presence distinction the raw fit missed.</p>
     <details><summary>Full table, corrected ({n_doc_types} types)</summary>{count_vs_presence_table(cvp_point)}</details>
+    <p>Rerun on the full multiple-imputation counts: pooled across 20 imputations, the strongest signal remains {cvp_mi.sort_values('elpd_diff_mean', ascending=False).iloc[0]['doc_type']} favoring presence ({fmt_pct(cvp_mi.sort_values('elpd_diff_mean', ascending=False).iloc[0]['frac_presence_wins']*100,0)} of imputations agree) -- still not a decisive, corpus-wide specification change for any type, consistent with the point-mode read.</p>
+    <details><summary>Full table, full MI ({n_doc_types} types)</summary>{count_vs_presence_mi_table(cvp_mi)}</details>
   </div>
 </section>
 
@@ -604,7 +708,7 @@ footer code {{ display: block; background: var(--surface); border: 1px solid var
     <li><span class="tag">Composition is stable, paperwork isn't</span>Neither num_persons nor num_adults shows a credible temporal trend (&sect;4) &mdash; the changing document burden (&sect;3's modest but credible trend, and &sect;6's 1956 pre-adult shift) reflects administrative practice changing, not the population of migrating families changing.</li>
     <li><span class="tag">The recurring lesson: check the null model</span>Three separate points in this investigation flipped on closer inspection: dispersion "trending" turned out to be unstructured noise dominated by one outlier (&sect;3); num_adults' "spread problem" turned out to be a wrong-likelihood problem, resolved by switching to Binomial (&sect;5); and the "adult effect shrinks" finding turned out to be a definitional artifact, confirmed twice over -- first by the three-group correction (&sect;6), then again when the underlying data bug itself was fixed and even the original two-group model stopped showing it (&sect;1, &sect;8). In each case the fix was to compare against a more general or more correctly-specified alternative via LOO (or, for &sect;1, simply against corrected data) rather than trust the first model that ran.</li>
     <li><span class="tag">Officer discretion, not a labeling error</span>&sect;7's document-type pattern (D.1 drops out for pre-adults after 1956; D.2/DM.1/NAMA stay flat or rise) was initially flagged as a possible D.1/D.2 label-mapping mismatch against the domain expert's account. Checked and ruled out. The domain expert's account has since been revised: pre-adults were never required to submit D.1 &mdash; selection officers instead required D.2, DM.1, and NAMA agreement, reflecting real discretion officers had over what to demand from young applicants (also seen in some 14&ndash;15 year-olds, below the pre-adult threshold, being treated as employable and required to file the same forms).</li>
-    <li><span class="tag">Classifier uncertainty checked, not just assumed away</span>Every model above treats predicted document counts as ground truth. Rechecked against document-type and segmentation classifier uncertainty (point estimate; &sect;3, &sect;6, &sect;7): the aggregate findings (temporal trend, three-group adult/pre-adult effects) barely move, but {shrink_synthesis_phrase}. D.2 newly shows a credible <em>increase</em> for pre-adults once corrected, not credible in the raw fit &mdash; reinforcing the revised officer-discretion account above.</li>
+    <li><span class="tag">Classifier uncertainty checked, not just assumed away</span>Every model above treats predicted document counts as ground truth. Rechecked against document-type and segmentation classifier uncertainty (&sect;3, &sect;6 point estimate; &sect;7 both point estimate and, now, full GPU multiple imputation): the aggregate findings (temporal trend, three-group adult/pre-adult effects) barely move, and {shrink_synthesis_phrase}. On the other hand, {grow_synthesis_phrase} -- point and full-MI corrections don't always agree, and when they don't, the more rigorous one (full MI) is the one to trust.</li>
   </ul>
 </section>
 
@@ -614,7 +718,7 @@ footer code {{ display: block; background: var(--surface); border: 1px solid var
   <p>Several LOO comparisons throughout are close (elpd differences within 1&ndash;2 dse), particularly the mean-structure comparisons in &sect;3&ndash;4, every era-interaction comparison in &sect;8's grid (A vs. A_era, B vs. C, B3 vs. C3, and D3 vs. C3 in &sect;6) &mdash; treat "no decisive winner" as a real answer (the data don't support extra structure) rather than a failure to find one. The one era-related exception is C3's pre-adult&times;era <em>coefficient</em>, which is credible even though C3 doesn't decisively out-predict B3 on LOO (&sect;6, &sect;8) -- a coefficient-level finding, not a model-comparison one, and worth not conflating with the LOO verdicts around it.</p>
   <p>Sample size drops sharply in 1961&ndash;1965 (4&ndash;17 dossiers/year vs. 55&ndash;293 in earlier years), and the pre/post-1956 split in &sect;7 necessarily halves the already-modest per-document-type data &mdash; corrected intervals are correspondingly wide for some types.</p>
   <p>&sect;7's document-type story rests on the domain expert's revised account (officer discretion over pre-adult paperwork, not a fixed D.1-only requirement) rather than a written policy document &mdash; plausible and consistent with the data, but still an oral-history reconstruction of 1950s&ndash;60s office practice.</p>
-  <p>The classifier-uncertainty corrections in &sect;3, &sect;6, and &sect;7 are all <strong>point estimates</strong> (deconvolving via each confusion matrix's posterior mean): they correct the average bias from segmentation and document-type misclassification, but still understate the classifiers' own posterior uncertainty, and &sect;3/&sect;6's segmentation-only correction doesn't touch the document-type confusion that &sect;7 alone is exposed to. A full multiple-imputation treatment (resampling both confusion matrices per posterior draw and refitting per imputation, the same GPU-scale approach already used in the dossier-composition analysis) would give honest intervals; not run here for the aggregate models, see aggregate_uncertainty.py's docstring.</p>
+  <p>&sect;7's classifier-uncertainty correction now has both a point-estimate version (deconvolving via each confusion matrix's posterior mean) and a full multiple-imputation version (20 imputations, GPU-fit, resampling both confusion matrices from their own posteriors and refitting per imputation) -- and the two versions don't always agree: D.2's point-mode credible increase for pre-adults does not survive the full-MI treatment, a concrete demonstration that point-mode intervals can understate uncertainty enough to change a verdict, not just its width. &sect;3 and &sect;6's segmentation-only corrections remain <strong>point estimates</strong> only (they correct the average segmentation bias but still understate the start-page classifier's own posterior uncertainty, and don't touch document-type confusion at all, which is irrelevant to aggregate <code>num_docs</code> but not to &sect;7's per-type counts). A full multiple-imputation version of &sect;3/&sect;6 would need the same GPU-scale treatment &sect;7 just got; not run here, see aggregate_uncertainty.py's docstring for why point mode was judged sufficient there (the point-mode correction barely moved &sect;3/&sect;6's findings at all, unlike &sect;7's D.2 result).</p>
 </section>
 
 <section class="refs">
