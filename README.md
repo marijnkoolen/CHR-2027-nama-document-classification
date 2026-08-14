@@ -1,13 +1,17 @@
 # NAMA document classification
 
-Code and results from a project studying migration-dossier documents held
+Code and results from our project studying migration-dossier documents held
 by the National Archives of Australia (NAA): a page-classification
 pipeline, document-composition/dossier-size analyses, annotation tooling,
 and an OCR/transcription pipeline. The underlying scans, transcriptions,
 and raw personal data are not included anywhere in this repo - only code,
 plots/summary results, and one anonymised labels dataset (see "What's
-here" below). This is a clean-room extraction from a private working repo
-that does hold that restricted data.
+here" below). The restricted data is stored locally and can be view on request.
+
+Although the code was developed specifically for the analysis of dossiers of
+Dutch migrants travelling under the NAMA agreement, many parts of the pipeline
+can be reused and repurposed for similar page stream segmentation and document
+classification tasks.
 
 The classification pipeline itself covers two tasks:
 
@@ -37,9 +41,9 @@ pip install -r scripts/classification/joint_legacy/requirements.txt
 pip install -r scripts/dossier_composition/requirements-gpu.txt
 ```
 
-## Bringing your own data
+## Description of the data
 
-Your corpus needs a labels TSV with, per page: a dossier/document
+The ground truth labels are available in `data/labels/dossier_labels_merged_pdf12_stratified.tsv` with, per page: a dossier
 identifier, page number, `document_type`, `start_page` (yes/no),
 `img_path`, `text_path`, and (optionally) a `split` column - see
 `scripts/classification/lib/labels.py`'s module docstring for the exact
@@ -156,7 +160,7 @@ data/labels/dossier_labels_merged_pdf12_stratified.tsv
 `scripts/dossier_composition/order.py` imports `statsmodels`, which isn't
 in `requirements-gpu.txt` - that file's own header explains it's a
 carefully pinned closure (to avoid two specific version-conflict issues
-already hit once), so I didn't add an unpinned `statsmodels` to it myself.
+already hit once).
 Also note: `scripts/dossier_size_model/` uses the same pymc/arviz/
 matplotlib/numpy/pandas/scipy stack as `dossier_composition/` but has no
 `requirements.txt` of its own - install `dossier_composition`'s
