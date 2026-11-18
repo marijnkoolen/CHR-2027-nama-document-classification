@@ -4,6 +4,7 @@
 # Byte-compiled / cache
 __pycache__/
 *.py[cod]
+*.nc
 .ipynb_checkpoints/
 
 # Environments

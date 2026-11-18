@@ -38,11 +38,17 @@ pretrained-ImageNet-normalization backbone out-of-distribution inputs.
 from __future__ import annotations
 
 import random
+import sys
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
 import pandas as pd
+
+# markdown_text.py lives in scripts/lib (shared across the project, not just
+# this pipeline's own lib/) - add it explicitly rather than relying on a
+# caller script to have already put it on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 from markdown_text import extract_text as _extract_markdown_text
 from pagexml import extract_text as _extract_pagexml_text
@@ -56,7 +62,7 @@ def get_text_extractor(text_source: str) -> Callable[[str], str]:
     "markdown") - shared by precompute_embeddings.py, train.py, and
     predict.py so all three resolve a text source identically. pagexml:
     PageXML transcriptions (lib/pagexml.py). markdown: Qwen2.5-VL
-    markdown-mode OCR output, stripped of markup (lib/markdown_text.py) -
+    markdown-mode OCR output, stripped of markup (scripts/lib/markdown_text.py) -
     see that module's docstring for why markup is stripped, and why
     markdown is this project's default text source."""
     if text_source == "markdown":

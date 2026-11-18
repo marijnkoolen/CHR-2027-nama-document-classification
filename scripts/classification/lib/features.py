@@ -18,4 +18,12 @@ now a plain re-export of the single implementation both pipelines share.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# markdown_text.py lives in scripts/lib (shared across the project, not just
+# this pipeline's own lib/) - add it explicitly rather than relying on a
+# caller script to have already put it on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
+
 from markdown_text import extract_text as safe_read_text  # noqa: F401

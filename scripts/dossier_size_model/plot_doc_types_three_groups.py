@@ -22,6 +22,18 @@ MUTED = "#898781"
 GRID = "#e1e0d9"
 SURFACE = "#fcfcfb"
 
+# TICK_FONTSIZE = 13
+# LABEL_FONTSIZE = 14
+# TITLE_FONTSIZE = 16
+SUPTITLE_FONTSIZE = 20
+# LEGEND_FONTSIZE = 13
+
+
+TICK_FONTSIZE = 16
+LABEL_FONTSIZE = 16
+TITLE_FONTSIZE = 18
+LEGEND_FONTSIZE = 16
+
 PERIOD_LABELS = {
     "full": "Full period (1952-1965, n=1307)",
     "pre1956": "Pre-1956 (1952-1955, n=646)",
@@ -35,7 +47,7 @@ def style_axes(ax):
         ax.spines[spine].set_visible(False)
     for spine in ("left", "bottom"):
         ax.spines[spine].set_color(MUTED)
-    ax.tick_params(colors=SECONDARY_INK, labelsize=9)
+    ax.tick_params(colors=SECONDARY_INK, labelsize=TICK_FONTSIZE)
     ax.grid(axis="x", color=GRID, linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
 
@@ -69,8 +81,9 @@ def plot_period(ax, idata, order, show_legend):
 
     ax.axvline(0, color=MUTED, linewidth=1, linestyle="--", zorder=1)
     ax.set_yticks(y)
-    ax.set_yticklabels(order, fontsize=9)
-    ax.set_xlabel("% change in expected document count per additional person (94% HDI)")
+    # ax.set_yticklabels([t.replace(" (", "\n(") for t in order], fontsize=TICK_FONTSIZE)
+    ax.set_yticklabels([t.split(" (")[0] for t in order], fontsize=TICK_FONTSIZE)
+    ax.set_xlabel("% change in expected document count\nper additional person (94% HDI)", fontsize=LABEL_FONTSIZE)
     style_axes(ax)
     ax.set_ylim(-0.7, len(order) - 0.3)
 
@@ -83,17 +96,17 @@ def main():
         .to_pandas().sort_values(ascending=True).index.tolist()
     )
 
-    fig, axes = plt.subplots(1, 3, figsize=(19, 6.8), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(22, 9.5), sharey=True)
     for ax, (period, label) in zip(axes, PERIOD_LABELS.items()):
         plot_period(ax, idatas[period], order, show_legend=(period == "full"))
         label = label.replace('Pre-1956', 'Pre-policy change').replace('Post-1956', 'Post-policy change')
         print(f"subplot title label: {label}")
-        ax.set_title(label, loc="left", color=INK, fontsize=11, fontweight="bold")
+        ax.set_title(label, loc="left", color=INK, fontsize=TITLE_FONTSIZE, fontweight="bold")
 
-    axes[0].legend(frameon=False, fontsize=9, labelcolor=SECONDARY_INK, loc="lower right")
+    axes[0].legend(frameon=False, fontsize=LEGEND_FONTSIZE, labelcolor=SECONDARY_INK, loc="lower right")
     fig.suptitle(
         "Which document types are driven by adults vs. pre-adults (16-17) vs. minors -- and does it shift at 1956?",
-        fontsize=12.5, fontweight="bold", color=INK, x=0.01, ha="left",
+        fontsize=SUPTITLE_FONTSIZE, fontweight="bold", color=INK, x=0.01, ha="left",
     )
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 

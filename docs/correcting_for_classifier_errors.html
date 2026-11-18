@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Correcting Classifier Mistakes</title>
+<meta name="description" content="A plain-language explanation of how the project uses a confusion matrix, Bayesian modelling and multiple imputation to correct statistics computed from automatically classified dossier pages.">
+<style>
+:root {
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --surface-2: #f3f1ec;
+  --text: #1f2328;
+  --muted: #5c6470;
+  --border: #e2ded6;
+  --accent: #2f6f8f;
+  --accent-soft: #e3eef3;
+  --warn: #a35a1f;
+  --warn-soft: #f7ebdf;
+  --good: #3c7a4a;
+  --good-soft: #e5f1e7;
+  --naive: #a35a1f;
+  --corrected: #2f6f8f;
+  --seg-1: #2f6f8f;
+  --seg-2: #c9853f;
+  --seg-3: #8a7fb8;
+  --diag: #dcebf2;
+  --off: #f7e4d6;
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15181c;
+    --surface: #1c2025;
+    --surface-2: #232830;
+    --text: #e6e8eb;
+    --muted: #9aa3ad;
+    --border: #2e343c;
+    --accent: #7fb6d1;
+    --accent-soft: #1f3340;
+    --warn: #e0a56e;
+    --warn-soft: #3a2a1c;
+    --good: #8fc79c;
+    --good-soft: #1e3324;
+    --naive: #e0a56e;
+    --corrected: #7fb6d1;
+    --seg-1: #7fb6d1;
+    --seg-2: #e0a56e;
+    --seg-3: #b3a9de;
+    --diag: #1f3a48;
+    --off: #46301f;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15181c;
+  --surface: #1c2025;
+  --surface-2: #232830;
+  --text: #e6e8eb;
+  --muted: #9aa3ad;
+  --border: #2e343c;
+  --accent: #7fb6d1;
+  --accent-soft: #1f3340;
+  --warn: #e0a56e;
+  --warn-soft: #3a2a1c;
+  --good: #8fc79c;
+  --good-soft: #1e3324;
+  --naive: #e0a56e;
+  --corrected: #7fb6d1;
+  --seg-1: #7fb6d1;
+  --seg-2: #e0a56e;
+  --seg-3: #b3a9de;
+  --diag: #1f3a48;
+  --off: #46301f;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.65 Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 16px 96px; }
+h1, h2, h3, .sans, table, .steps, .callout-title, figcaption, nav {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+h1 { font-size: 2.1rem; line-height: 1.2; margin: 0 0 .4em; letter-spacing: -.01em; }
+.subtitle { font-size: 1.12rem; color: var(--muted); margin: 0 0 .6em; }
+.kicker { font-size: .85rem; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 600; margin-bottom: .6em; }
+h2 { font-size: 1.45rem; margin: 2.4em 0 .6em; padding-top: .4em; border-top: 1px solid var(--border); }
+h2 .num { color: var(--accent); margin-right: .35em; }
+h3 { font-size: 1.12rem; margin: 1.8em 0 .5em; }
+p { margin: 0 0 1em; }
+a { color: var(--accent); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .86em; background: var(--surface-2); padding: .1em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+strong { font-weight: 650; }
+ul, ol { padding-left: 1.3em; margin: 0 0 1em; }
+li { margin: .3em 0; }
+
+nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; margin: 28px 0; font-size: .92rem; box-shadow: var(--shadow); }
+nav.toc ol { margin: .4em 0 0; columns: 2; column-gap: 28px; }
+nav.toc li { margin: .15em 0; break-inside: avoid; }
+nav.toc a { text-decoration: none; }
+nav.toc a:hover { text-decoration: underline; }
+@media (max-width: 560px) { nav.toc ol { columns: 1; } }
+
+.callout { background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 0 10px 10px 0; padding: 16px 20px; margin: 1.4em 0; }
+.callout.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+.callout.good { background: var(--good-soft); border-left-color: var(--good); }
+.callout-title { font-weight: 650; font-size: .95rem; margin-bottom: .4em; }
+.callout p:last-child, .callout ul:last-child, .callout ol:last-child { margin-bottom: 0; }
+
+.table-scroll { overflow-x: auto; margin: 1.2em 0 1.4em; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; line-height: 1.4; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+thead th { background: var(--surface-2); font-weight: 600; }
+tbody tr:last-child td { border-bottom: none; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cm td.n { text-align: center; }
+.cm th.n { text-align: center; }
+.cm td.diag { background: var(--diag); font-weight: 700; }
+.cm td.off { background: var(--off); font-weight: 600; }
+.cm td.zero { color: var(--muted); opacity: .55; }
+.cm th.rowh { white-space: nowrap; }
+.cm .small { display: block; font-weight: 400; color: var(--muted); font-size: .8rem; }
+figcaption { font-size: .85rem; color: var(--muted); margin-top: -.6em; margin-bottom: 1.4em; }
+
+/* steps diagram */
+.steps { list-style: none; padding: 0; margin: 1.6em 0; position: relative; }
+.step { display: grid; grid-template-columns: 40px 1fr; gap: 14px; position: relative; padding-bottom: 18px; margin: 0; }
+.step:not(:last-child)::after { content: ""; position: absolute; left: 19px; top: 40px; bottom: 0; width: 2px; background: var(--border); }
+.step .dot { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: var(--bg); display: grid; place-items: center; font-weight: 700; font-size: 1rem; z-index: 1; }
+.step.input .dot { background: var(--surface-2); color: var(--muted); border: 2px solid var(--border); }
+.step.result .dot { background: var(--good); }
+.step .box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; box-shadow: var(--shadow); }
+.step .box b { display: block; font-size: .98rem; margin-bottom: 2px; }
+.step .box span { color: var(--muted); font-size: .88rem; line-height: 1.45; display: block; }
+.loopnote { margin-top: 8px; display: inline-block; font-size: .8rem; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 10px; }
+
+/* weighted die bar */
+.die { margin: 1.4em 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+.die-title { font-size: .9rem; font-weight: 600; margin-bottom: 8px; }
+.die-bar { display: flex; height: 30px; border-radius: 6px; overflow: hidden; gap: 2px; }
+.die-bar div { display: grid; place-items: center; color: #fff; font-size: .78rem; font-weight: 600; white-space: nowrap; }
+.die-bar .a { background: var(--seg-1); flex: 82; }
+.die-bar .b { background: var(--seg-2); flex: 8.5; }
+.die-bar .c { background: var(--seg-3); flex: 8.5; }
+.die-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: .82rem; color: var(--muted); }
+.die-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .die-bar div { color: #15181c; } }
+:root[data-theme="dark"] .die-bar div { color: #15181c; }
+
+/* chart */
+.chart { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 10px 6px; margin: 1.4em 0 .4em; box-shadow: var(--shadow); }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .lbl { fill: var(--text); font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+.chart .tick { fill: var(--muted); font: 11.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .rng { stroke: var(--corrected); stroke-width: 6; stroke-linecap: round; opacity: .35; }
+.chart .cor { fill: var(--corrected); }
+.chart .nai { fill: var(--surface); stroke: var(--naive); stroke-width: 2.2; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 20px; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; color: var(--muted); padding: 4px 8px 8px; }
+.legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.legend .l-n::before { border: 2.2px solid var(--naive); background: var(--surface); width: 7px; height: 7px; }
+.legend .l-c::before { background: var(--corrected); }
+.legend .l-r::before { background: var(--corrected); opacity: .35; border-radius: 3px; width: 22px; height: 6px; vertical-align: 2px; }
+
+/* two-mode compare */
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 1.2em 0 1.6em; }
+@media (max-width: 600px) { .modes { grid-template-columns: 1fr; } }
+.mode { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); font-size: .95rem; }
+.mode h4 { margin: 0 0 .4em; font: 650 1rem -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+.mode .tag { font: 600 .75rem -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.mode ul { margin: .4em 0 0; }
+
+.tldr { counter-reset: t; list-style: none; padding: 0; }
+.tldr li { counter-increment: t; position: relative; padding-left: 2.2em; margin: .6em 0; }
+.tldr li::before { content: counter(t); position: absolute; left: 0; top: .1em; width: 1.55em; height: 1.55em; border-radius: 50%; background: var(--accent); color: var(--bg); font: 700 .85rem/1.55em -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: center; }
+
+.footer-note { margin-top: 3em; font-size: .88rem; color: var(--muted); border-top: 1px solid var(--border); padding-top: 1em; }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<div class="kicker sans">Method explainer · no statistics background needed</div>
+<h1>Correcting for the computer's mistakes</h1>
+<p class="subtitle">How we use a confusion matrix, Bayesian modelling and multiple imputation to get honest statistics from automatically classified dossiers</p>
+
+<nav class="toc" aria-label="Contents">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#short">The short version</a></li>
+    <li><a href="#problem">The problem</a></li>
+    <li><a href="#confusion">Measuring the mistakes</a></li>
+    <li><a href="#bayes">How well do we know them?</a></li>
+    <li><a href="#reverse">Turning the question around</a></li>
+    <li><a href="#impute">Filling in plausible labels</a></li>
+    <li><a href="#repeat">Repeat and summarise</a></li>
+    <li><a href="#results">What it does to the results</a></li>
+    <li><a href="#why">Why it matters</a></li>
+    <li><a href="#limits">What it cannot do</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+    <li><a href="#code">Where it lives in the code</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="short">The short version</h2>
+
+<p>We did not read the 114,986 pages in the 3,343 migration dossiers ourselves. A computer model (a <em>classifier</em>) did. For every page it decided two things:</p>
+<ol>
+  <li><strong>Does a new document start on this page?</strong> This splits a dossier into separate documents.</li>
+  <li><strong>What type of document is this?</strong> For example a D.1 form, a NAMA agreement or a Registration card.</li>
+</ol>
+<p>The classifier is good, but it is not perfect, and <strong>it is better at some document types than at others</strong>. If we simply counted what it predicted, some numbers would come out too high, others too low, and we would not know which.</p>
+<p>So we do four things:</p>
+<ol class="tldr">
+  <li><strong>Measure the mistakes.</strong> We check the classifier against a sample of pages whose correct answer a person has recorded. That gives a table of who-gets-mistaken-for-whom: the <strong>confusion matrix</strong>.</li>
+  <li><strong>Be honest about how well we know those mistakes.</strong> The check sample is small, so a <strong>Bayesian model</strong> estimates not one error table but a whole range of plausible ones.</li>
+  <li><strong>Fill in plausible true labels.</strong> For every predicted document we "roll a weighted die" to choose what it most plausibly really is, given what the classifier said. This is <strong>imputation</strong>.</li>
+  <li><strong>Repeat many times and compare.</strong> We build many plausible versions of the corpus, compute our statistics on each, and report the typical value plus a range. This is <strong>multiple imputation</strong>.</li>
+</ol>
+<div class="callout good">
+  <div class="callout-title">The result</div>
+  <p>Statistics that are <strong>corrected</strong> for the classifier's known biases and come with an <strong>honest range</strong> of uncertainty, instead of numbers that look precise but are quietly wrong.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="problem"><span class="num">1</span>The problem: an assistant who makes uneven mistakes</h2>
+
+<p>Imagine you hire an assistant to sort 115,000 archive pages into piles by document type. They are fast and usually right. But:</p>
+<ul>
+  <li>Some forms are distinctive and they never get them wrong (the D.1 form, for example).</li>
+  <li>Some look like other documents, and they sometimes put them on the wrong pile.</li>
+  <li>There is also a large mixed pile called <strong>"Other"</strong>: everything that isn't one of the 11 types we track. Because that pile is so large, even a small slip rate from it adds a noticeable number of wrong pages to the smaller piles.</li>
+</ul>
+<p>Now suppose you ask: <em>"In what share of dossiers does an Approval notice appear?"</em> If you count the assistant's Approval notice pile at face value, you also count every page they wrongly put there. And the size of that error is <strong>different for every document type</strong>. A uniform small error would be tolerable. An uneven one distorts comparisons between types, which is exactly what our analyses are about.</p>
+<p>The same applies to <strong>where documents begin</strong>. If the assistant misses the first page of a new document, two documents get merged into one. If they wrongly think a new document starts, one document gets split into two. Both change the counts.</p>
+<div class="callout">
+  <div class="callout-title">What this procedure is for</div>
+  <p>Taking the classifier's predictions, together with what we know about how and how often it errs, and producing statistics about the dossiers as they <em>really</em> are, along with an honest statement of how sure we can be.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="confusion"><span class="num">2</span>Step one: measuring the mistakes (the confusion matrix)</h2>
+
+<p>To find out how the assistant errs, you take a sample of pages, have an expert record the correct answer for each, and compare. In our project this is the <strong>test set</strong>: 338 pages that the classifier never saw while it was being trained, each with a correct label added by a person.</p>
+<p>The comparison is laid out as a table called a <strong>confusion matrix</strong>:</p>
+<ul>
+  <li>each <strong>row</strong> is what the page <em>really</em> is;</li>
+  <li>each <strong>column</strong> is what the classifier <em>said</em> it is;</li>
+  <li>each cell counts how many pages fall into that combination.</li>
+</ul>
+<p>Pages on the diagonal (row and column the same, shaded blue) were classified correctly. Everything off the diagonal (shaded orange) is a mistake, and the table shows <em>which</em> mistake.</p>
+
+<div class="table-scroll">
+<table class="cm">
+  <thead>
+    <tr><th>Really is ↓ &nbsp;/&nbsp; Classifier said →</th><th class="n">Approval notice</th><th class="n">D.2</th><th class="n">DM.1</th><th class="n">NAMA agr.</th><th class="n">Report of selection</th><th class="n">Testim. labour</th><th class="n">Other</th></tr>
+  </thead>
+  <tbody>
+    <tr><th class="rowh">Approval notice <span class="small">9 pages</span></th><td class="n diag">9</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td></tr>
+    <tr><th class="rowh">DM.1 <span class="small">33 pages</span></th><td class="n zero">0</td><td class="n zero">0</td><td class="n diag">31</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n off">2</td></tr>
+    <tr><th class="rowh">NAMA agreement <span class="small">19 pages</span></th><td class="n zero">0</td><td class="n zero">0</td><td class="n off">1</td><td class="n diag">18</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td></tr>
+    <tr><th class="rowh">Report of selection… <span class="small">18 pages</span></th><td class="n off">1</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n diag">17</td><td class="n zero">0</td><td class="n zero">0</td></tr>
+    <tr><th class="rowh">Testimonial labour <span class="small">52 pages</span></th><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n diag">51</td><td class="n off">1</td></tr>
+    <tr><th class="rowh">Other <span class="small">93 pages</span></th><td class="n off">1</td><td class="n off">2</td><td class="n zero">0</td><td class="n zero">0</td><td class="n zero">0</td><td class="n off">3</td><td class="n diag">87</td></tr>
+  </tbody>
+</table>
+</div>
+<figcaption>Excerpt of the document-type confusion matrix for the current classifier (test set). Of the 93 pages that were really "Other", 87 were labelled correctly, 1 was called an Approval notice, 2 were called D.2 and 3 were called Testimonial labour.</figcaption>
+
+<p>And for the start-of-a-new-document question:</p>
+<div class="table-scroll">
+<table class="cm">
+  <thead><tr><th>Really is ↓ &nbsp;/&nbsp; Classifier said →</th><th class="n">not a start</th><th class="n">start</th></tr></thead>
+  <tbody>
+    <tr><th class="rowh">not a start <span class="small">100 pages</span></th><td class="n diag">92</td><td class="n off">8</td></tr>
+    <tr><th class="rowh">start of a new document <span class="small">238 pages</span></th><td class="n off">5</td><td class="n diag">233</td></tr>
+  </tbody>
+</table>
+</div>
+<figcaption>Start-of-document confusion matrix. The classifier missed 5 real starts (which would merge documents) and invented 8 starts that weren't there (which would split documents).</figcaption>
+
+<!-- ============================================================ -->
+<h2 id="bayes"><span class="num">3</span>Step two: being honest about how well we know the mistakes</h2>
+
+<p>The test set is small. Some types appear only a handful of times: Approval notice 9 times, Testimonial medical form only 5 times. That raises a real question.</p>
+<div class="callout warn">
+  <p>The classifier got all 9 Approval notices right. Does that mean it <strong>never</strong> gets them wrong?</p>
+</div>
+<p>Common sense says no. With only 9 tries, a perfect score is also quite possible for an assistant who is right "only" 85% of the time. A larger sample might well show a slip or two. Taking 9 out of 9 as "100% reliable" would be overconfident.</p>
+<p><strong>Bayesian modelling</strong> is a way of reasoning that makes this common sense precise. It works in three moves.</p>
+
+<h3>a. Start with a sensible expectation (the "prior")</h3>
+<p>Before looking at the test results, we assume something modest: <em>the classifier is usually right, and when it is wrong, it is most likely to pick a label that is common overall.</em> In the code this starting expectation puts 70% of the weight on "correct" and spreads the remaining 30% across labels according to how often the classifier uses each label.</p>
+
+<h3>b. Let the data update that expectation</h3>
+<p>The test results are then combined with the starting expectation. Where there is plenty of evidence (93 "Other" pages, 52 Testimonial labour pages), the evidence dominates and the starting expectation hardly matters. Where there is little evidence (5 or 9 pages), the estimate leans more on the starting expectation and stays appropriately cautious.</p>
+
+<h3>c. Borrow strength across types</h3>
+<p>How much weight should the starting expectation get? Rather than picking a number by hand, the model <em>learns it from all twelve types together</em>. Think of judging a new restaurant that has only three reviews: you would partly go by those three reviews and partly by how restaurants of that kind usually do. The model does the same for thinly-tested document types: it lets them borrow from the overall pattern across all types. Statisticians call this <strong>partial pooling</strong>, or a <strong>hierarchical</strong> model.</p>
+
+<div class="callout">
+  <div class="callout-title">The result is not one error table but thousands</div>
+  <p>The computer generates a large collection (6,000) of plausible confusion matrices. Each is consistent with the test results and the starting expectation, and tables that fit the evidence better appear more often. Together they express both <em>what we think the error rates are</em> and <em>how unsure we are about them</em>.</p>
+  <p>For example, the average of these plausible tables puts the chance that a real Approval notice is recognised correctly at about <strong>96%</strong>, not 100%. Individual tables in the collection range somewhat above and below that.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="reverse"><span class="num">4</span>Step three: turning the question around</h2>
+
+<p>The confusion matrix answers: <em>"If a page <strong>really is</strong> an Approval notice, what will the classifier say?"</em></p>
+<p>But in the 115,000-page corpus we face the reverse question: <em>"The classifier <strong>says</strong> Approval notice. What is the page really?"</em></p>
+<p>These are not the same, and the difference matters. The reverse answer also depends on <strong>how common each type is</strong>. Recall that of the 93 "Other" test pages, 1 was called an Approval notice. That is a slip rate of only about 1 in 100. But "Other" pages are roughly ten times as common as Approval notices, so even that small slip rate adds a noticeable number of false "Approval notices" to the pile. The same goes for the one Report of selection that was mistaken for one.</p>
+<p>Combining the error table with how common each type is (using a rule known as <strong>Bayes' rule</strong>) gives, for the current classifier:</p>
+
+<div class="die" role="img" aria-label="When the classifier says Approval notice: 82% really Approval notice, 8.5% Other, 8.5% Report of selection and medical officers">
+  <div class="die-title">When the classifier says "Approval notice", the page really is…</div>
+  <div class="die-bar"><div class="a">82%</div><div class="b"></div><div class="c"></div></div>
+  <div class="die-legend">
+    <span><i style="background:var(--seg-1)"></i>Approval notice · 82%</span>
+    <span><i style="background:var(--seg-2)"></i>Other · 8.5%</span>
+    <span><i style="background:var(--seg-3)"></i>Report of selection and medical officers · 8.5%</span>
+  </div>
+</div>
+
+<p>In other words, of every 12 pages labelled Approval notice, roughly 10 really are one and about 2 are something else. For other labels the picture is different:</p>
+
+<div class="table-scroll">
+<table>
+  <thead><tr><th>When the classifier says…</th><th class="n">it really is that type about…</th><th>most common alternative</th></tr></thead>
+  <tbody>
+    <tr><td>D.1</td><td class="n">99%</td><td>(spread thinly)</td></tr>
+    <tr><td>NAMA agreement</td><td class="n">99%</td><td>(spread thinly)</td></tr>
+    <tr><td>DM.1</td><td class="n">96%</td><td>NAMA agreement, 3%</td></tr>
+    <tr><td>Testimonial labour</td><td class="n">93%</td><td>Other, 5.5%</td></tr>
+    <tr><td>D.2</td><td class="n">91%</td><td>Other, 8%</td></tr>
+    <tr><td>Approval notice</td><td class="n">82%</td><td>Other / Report of selection, 8.5% each</td></tr>
+    <tr><td>Other</td><td class="n">95%</td><td>DM.1, 2.3%</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>The last row matters too. A small share of pages the classifier calls "Other" are really tracked types (for example DM.1). Correcting for this <em>raises</em> the estimated counts of those types. <strong>The correction can push numbers up as well as down.</strong></p>
+<p>The same reversal is done for document starts. With the current classifier:</p>
+<ul>
+  <li>a page marked as <strong>the start of a new document</strong> really is one about <strong>96%</strong> of the time;</li>
+  <li>a page marked as <strong>a continuation</strong> is really the start of a new document about <strong>5.5%</strong> of the time.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="impute"><span class="num">5</span>Step four: filling in plausible true labels (imputation)</h2>
+
+<p>We now know, for every kind of prediction, the chances of what is really there. <strong>Imputation</strong> means filling in a plausible value where the true value is unknown. Here, it means choosing a plausible <em>true</em> label for each predicted page or document.</p>
+<p>We do this by chance, in proportion to those probabilities. Picture the weighted die shown above for each document the classifier labelled "Approval notice": it lands on "Approval notice" 82% of the time, on "Other" 8.5% of the time and on "Report of selection" 8.5% of the time. Roll it once for every such document in the corpus. A document labelled "D.1" gets a die that lands on "D.1" about 99% of the time, and so on.</p>
+<p>This happens in two layers, in this order:</p>
+<ol>
+  <li><strong>Document boundaries first.</strong> For every page, roll a die for "is this really the start of a new document?" using the start-page probabilities. Then rebuild the documents from those corrected starts. Some documents get merged and some get split, so the number of documents per dossier can change.</li>
+  <li><strong>Document types second.</strong> For each rebuilt document, take the type the classifier gave most of its pages (a majority vote), then roll that type's die to choose a plausible true type.</li>
+</ol>
+<p>The outcome is one complete, <strong>plausible version of the corpus</strong>. Every document has a boundary and a type, and the patterns of error we measured have been accounted for on average.</p>
+
+<!-- ============================================================ -->
+<h2 id="repeat"><span class="num">6</span>Step five: repeat many times and summarise (multiple imputation)</h2>
+
+<p>One roll of the dice gives one plausible version. A different roll gives a slightly different one. Neither is "the truth". The truth is somewhere in the spread. So we:</p>
+<ol>
+  <li><strong>Repeat the whole filling-in step many times</strong>: 200 times for the dossier composition analyses, and 20 times for the heavier dossier size models (each of those takes about 25 minutes of computing on its own).</li>
+  <li><strong>Use a different plausible error table each time</strong>, drawn from the 6,000 from step two. This means the spread reflects two kinds of uncertainty: the luck of the dice (<em>which</em> documents were misclassified) and our uncertainty about the error rates themselves (<em>how often</em> the classifier errs).</li>
+  <li><strong>Compute the statistic we care about on each version</strong>, for example "share of dossiers that contain an Approval notice".</li>
+  <li><strong>Summarise across all versions.</strong> The average is our <strong>corrected estimate</strong>. The range covering the middle 94% of versions (from the 3rd to the 97th percentile) is our <strong>uncertainty interval</strong>. In 94 out of 100 plausible versions of the corpus, the value fell inside that range.</li>
+</ol>
+<p>We also compute every statistic once on the classifier's raw predictions, the <strong>naive</strong> value. Comparing naive and corrected shows how much the classifier's mistakes would have distorted the picture.</p>
+
+<h3>The whole procedure at a glance</h3>
+<ol class="steps">
+  <li class="step input"><div class="dot">T</div><div class="box"><b>Test set</b><span>338 pages with correct answers recorded by a person.</span></div></li>
+  <li class="step"><div class="dot">1</div><div class="box"><b>Confusion matrices</b><span>Who gets mistaken for whom, for document type and for "start of a new document".</span></div></li>
+  <li class="step"><div class="dot">2</div><div class="box"><b>Bayesian model</b><span>Turns the small test set into 6,000 plausible error tables, cautious where evidence is thin.</span></div></li>
+  <li class="step input"><div class="dot">P</div><div class="box"><b>Classifier's predictions</b><span>Labels for all 114,986 pages in 3,343 dossiers.</span></div></li>
+  <li class="step"><div class="dot">3</div><div class="box"><b>Turn the question around</b><span>"Classifier says X: what is it really?" Combines the error table with how common each type is.</span></div></li>
+  <li class="step"><div class="dot">4</div><div class="box"><b>Fill in one plausible version of the corpus</b><span>(a) roll dice for document starts and rebuild documents; (b) roll dice for each document's type.</span></div></li>
+  <li class="step"><div class="dot">5</div><div class="box"><b>Compute the statistic on this version</b><span>Then go back to step 4 with the next plausible error table.</span><span class="loopnote">repeat 200× (20× for the size models)</span></div></li>
+  <li class="step result"><div class="dot">✓</div><div class="box"><b>Corrected estimate + 94% range</b><span>The average and spread across all versions, reported next to the naive value.</span></div></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="results"><span class="num">7</span>What it does to the results: examples</h2>
+
+<h3>Dossier composition <code>scripts/dossier_composition/</code></h3>
+<p>These analyses describe what dossiers are made of: how often each document type appears (<strong>occurrence</strong>), which types appear together (<strong>co-occurrence</strong>), whether documents of one type sit together or are scattered (<strong>dispersion</strong>), and in what order types typically appear (<strong>order</strong>). Every one is computed both naively and corrected.</p>
+<p>Below: the share of dossiers containing at least one document of each type (current classifier, all 3,343 dossiers).</p>
+
+<div class="chart">
+  <div class="legend"><span class="l-n">Naive (raw predictions)</span><span class="l-c">Corrected estimate</span><span class="l-r">94% range</span></div>
+  <svg viewBox="0 0 640 256" role="img" aria-label="Share of dossiers containing each document type, naive versus corrected with 94% range. D.1: 95.2 naive, 94.8 corrected. NAMA agreement: 91.2 naive, 88.3 corrected. DM.1: 83.4 naive, 84.6 corrected. D.2: 89.6 naive, 83.2 corrected. Approval notice: 71.9 naive, 60.7 corrected, range 48.5 to 68.7. Testimonial medical form: 40.5 naive, 41.0 corrected.">
+    <line x1="210.0" x2="210.0" y1="22" y2="226" class="grid"/><text x="210.0" y="244" class="tick" text-anchor="middle">30%</text>
+    <line x1="267.1" x2="267.1" y1="22" y2="226" class="grid"/><text x="267.1" y="244" class="tick" text-anchor="middle">40%</text>
+    <line x1="324.3" x2="324.3" y1="22" y2="226" class="grid"/><text x="324.3" y="244" class="tick" text-anchor="middle">50%</text>
+    <line x1="381.4" x2="381.4" y1="22" y2="226" class="grid"/><text x="381.4" y="244" class="tick" text-anchor="middle">60%</text>
+    <line x1="438.6" x2="438.6" y1="22" y2="226" class="grid"/><text x="438.6" y="244" class="tick" text-anchor="middle">70%</text>
+    <line x1="495.7" x2="495.7" y1="22" y2="226" class="grid"/><text x="495.7" y="244" class="tick" text-anchor="middle">80%</text>
+    <line x1="552.9" x2="552.9" y1="22" y2="226" class="grid"/><text x="552.9" y="244" class="tick" text-anchor="middle">90%</text>
+    <line x1="610.0" x2="610.0" y1="22" y2="226" class="grid"/><text x="610.0" y="244" class="tick" text-anchor="middle">100%</text>
+    <g><text x="200" y="44" class="lbl" text-anchor="end">D.1</text><line x1="575.7" x2="582.0" y1="40" y2="40" class="rng"/><circle cx="580.3" cy="40" r="5" class="cor"/><circle cx="582.6" cy="40" r="5" class="nai"/></g>
+    <g><text x="200" y="78" class="lbl" text-anchor="end">NAMA agreement</text><line x1="519.1" x2="554.0" y1="74" y2="74" class="rng"/><circle cx="543.1" cy="74" r="5" class="cor"/><circle cx="559.7" cy="74" r="5" class="nai"/></g>
+    <g><text x="200" y="112" class="lbl" text-anchor="end">DM.1</text><line x1="508.9" x2="536.9" y1="108" y2="108" class="rng"/><circle cx="522.0" cy="108" r="5" class="cor"/><circle cx="515.1" cy="108" r="5" class="nai"/></g>
+    <g><text x="200" y="146" class="lbl" text-anchor="end">D.2</text><line x1="482.0" x2="539.7" y1="142" y2="142" class="rng"/><circle cx="514.0" cy="142" r="5" class="cor"/><circle cx="550.6" cy="142" r="5" class="nai"/></g>
+    <g><text x="200" y="180" class="lbl" text-anchor="end">Approval notice</text><line x1="315.7" x2="431.1" y1="176" y2="176" class="rng"/><circle cx="385.4" cy="176" r="5" class="cor"/><circle cx="449.4" cy="176" r="5" class="nai"/></g>
+    <g><text x="200" y="214" class="lbl" text-anchor="end">Testimonial medical form</text><line x1="256.9" x2="305.4" y1="210" y2="210" class="rng"/><circle cx="272.9" cy="210" r="5" class="cor"/><circle cx="270.0" cy="210" r="5" class="nai"/></g>
+  </svg>
+</div>
+
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Document type</th><th class="n">Naive</th><th class="n">Corrected</th><th class="n">94% range</th></tr></thead>
+  <tbody>
+    <tr><td>D.1</td><td class="n">95.2%</td><td class="n">94.8%</td><td class="n">94.0 – 95.1%</td></tr>
+    <tr><td>NAMA agreement</td><td class="n">91.2%</td><td class="n">88.3%</td><td class="n">84.1 – 90.2%</td></tr>
+    <tr><td>DM.1</td><td class="n">83.4%</td><td class="n">84.6%</td><td class="n">82.3 – 87.2%</td></tr>
+    <tr><td>D.2</td><td class="n">89.6%</td><td class="n">83.2%</td><td class="n">77.6 – 87.7%</td></tr>
+    <tr><td>Approval notice</td><td class="n">71.9%</td><td class="n">60.7%</td><td class="n">48.5 – 68.7%</td></tr>
+    <tr><td>Testimonial medical form</td><td class="n">40.5%</td><td class="n">41.0%</td><td class="n">38.2 – 46.7%</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>What to take from this:</p>
+<ul>
+  <li><strong>Reliable types barely move.</strong> D.1 is recognised almost perfectly, so its naive and corrected values are nearly the same, and the range is narrow.</li>
+  <li><strong>Some types move a lot.</strong> Approval notice drops by about 11 percentage points, and the naive value (71.9%) lies <em>outside</em> the corrected range. Reported naively, we would have overstated how common Approval notices are. D.2 drops by about 6 points for the same reason: some "Other" pages get mislabelled as D.2.</li>
+  <li><strong>Some types move up.</strong> DM.1 rises slightly, because a few DM.1 documents were hidden in the "Other" pile.</li>
+  <li><strong>The ranges differ.</strong> Approval notice has a wide range (about 20 points) because it is thinly represented in the test set and mixed up with common types. That width is honest information: it tells the reader how firmly a claim about Approval notices can be made.</li>
+</ul>
+
+<h3>Dossier size and family composition <code>scripts/dossier_size_model/</code></h3>
+<p>These models ask how the number of documents in a dossier relates to who is in the family (children under 16, 16–17 year-olds, adults) and to the travel year, including whether things changed around 1956. The classifier's output enters in two places, and each gets the correction it needs.</p>
+<p><strong>Total number of documents per dossier.</strong> This depends only on <em>where documents begin</em>, not on what type they are, so only the start-of-document correction is needed. Here we use a quicker shortcut (see below): each page counts as a <em>fraction</em> of a document start. A page the classifier marks as a start counts as about 0.96; a page it marks as a continuation counts as about 0.055. The first page of a dossier always counts as 1. Summed per dossier, this gives an expected corrected count. For the 1,307 dossiers in this analysis, the average went from 24.5 to 24.2 documents, and 285 dossiers shifted by more than half a document. All models were then refitted on the corrected counts. The ranking of the three competing explanations for the 1956 change stayed the same.</p>
+<p><strong>Number of documents of each type per family-member group.</strong> This depends on both boundaries and types, so it gets the full two-layer multiple imputation from section 6. For each of 20 plausible versions of the corpus, the <em>entire</em> statistical model is refitted, and the 20 sets of results are then pooled. This takes enough computing power that it runs on a GPU server.</p>
+
+<h3>The shortcut vs. the full procedure</h3>
+<div class="modes">
+  <div class="mode">
+    <div class="tag">"point" mode</div>
+    <h4>Shortcut</h4>
+    <p>Use only the <em>average</em> error table, and give each document fractional counts instead of rolling dice ("0.82 of an Approval notice, 0.085 of a Report of selection…").</p>
+    <ul>
+      <li>Fast, runs on an ordinary computer</li>
+      <li><strong>Corrects the average bias</strong></li>
+      <li>Treats the error rates as exactly known and skips the dice, so its <strong>ranges come out too narrow</strong></li>
+    </ul>
+    <p style="margin:.6em 0 0">Good for a quick check of whether the correction changes the story.</p>
+  </div>
+  <div class="mode">
+    <div class="tag">"mi" mode</div>
+    <h4>Full multiple imputation</h4>
+    <p>Everything described in sections 5 and 6.</p>
+    <ul>
+      <li>Slower; the per-type size models need a GPU server</li>
+      <li><strong>Corrects the bias</strong></li>
+      <li><strong>And gives honest ranges</strong></li>
+    </ul>
+    <p style="margin:.6em 0 0">Where the full version is available, it is the one to trust.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="why"><span class="num">8</span>Why it matters</h2>
+<ul>
+  <li><strong>It prevents false findings.</strong> Without the correction, we would have reported Approval notices in about 72% of dossiers. The best corrected estimate is about 61%, and the naive figure lies outside the plausible range. Differences between document types, between periods, or between family types can be partly or entirely produced by the classifier rather than the archive. The correction separates the two.</li>
+  <li><strong>It makes comparisons fair.</strong> Because the classifier's reliability differs by type, raw counts are not comparable across types. After correction, every type has been adjusted by its own error pattern.</li>
+  <li><strong>It tells us how sure we can be.</strong> A number without a range invites over-reading. The ranges show where the evidence is firm (D.1) and where it is thin (Approval notice), so claims in the paper can be worded with the right strength.</li>
+  <li><strong>It is transparent and checkable.</strong> Every result is reported both naively and corrected. Readers can see exactly how much the correction changed, and judge for themselves.</li>
+  <li><strong>It keeps working when the classifier improves.</strong> When a better classifier becomes available, we re-measure its mistakes on the test set and rerun the pipeline. No code changes are needed. A better classifier simply produces a smaller gap between naive and corrected, and narrower ranges.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="limits"><span class="num">9</span>What it cannot do (assumptions and limits)</h2>
+<p>The correction is only as good as the information it rests on. It assumes:</p>
+<ul>
+  <li><strong>The test set is representative.</strong> The classifier is assumed to make the same kinds of mistakes, at the same rates, across the whole corpus as in the 338 test pages. How common each type is in the test set is also used in step three. If some dossiers (say, from a particular year or office) are harder to classify than the test pages suggest, the correction will not fully capture that.</li>
+  <li><strong>Mistakes are independent.</strong> Each page or document is corrected on its own, without considering its neighbours or the rest of its dossier. In reality a person might use context ("there's already a D.1 here, so this is probably not another one"). The correction does not.</li>
+  <li><strong>It can only fix mistakes it has seen.</strong> Kinds of confusion that never occurred in the test set get only the small default allowance from the starting expectation. Rare but real kinds of mistake may be underestimated.</li>
+  <li><strong>Thin evidence stays thin.</strong> Types with very few test examples get wide ranges. The method reports that uncertainty but cannot remove it. Only more labelled test pages can.</li>
+  <li><strong>It describes the surviving record.</strong> The correction is about classification errors. It cannot tell us whether pages were lost, reordered or misfiled in the archive or during digitisation.</li>
+</ul>
+<p>These limits do not make the corrected numbers unreliable. They are the reason the method reports ranges, and the reason naive and corrected values are shown side by side.</p>
+
+<!-- ============================================================ -->
+<h2 id="glossary"><span class="num">10</span>Glossary</h2>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Term</th><th>Plain meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Classifier</strong></td><td>The computer model that labels each page (document type; start of a new document or not).</td></tr>
+    <tr><td><strong>Prediction / predicted label</strong></td><td>What the classifier said about a page.</td></tr>
+    <tr><td><strong>Test set</strong></td><td>Pages with a correct answer recorded by a person, which the classifier did not learn from. Used to measure its mistakes.</td></tr>
+    <tr><td><strong>Confusion matrix</strong></td><td>A table counting, for each true type, what the classifier said. It shows who gets mistaken for whom.</td></tr>
+    <tr><td><strong>Naive</strong></td><td>Computed directly from the classifier's predictions, as if they were all correct.</td></tr>
+    <tr><td><strong>Corrected</strong></td><td>Computed after accounting for the classifier's measured mistakes.</td></tr>
+    <tr><td><strong>Bayesian modelling</strong></td><td>Reasoning that starts from a sensible expectation and updates it with evidence. It produces a range of plausible answers rather than a single one.</td></tr>
+    <tr><td><strong>Prior</strong></td><td>The starting expectation before looking at the evidence. Here: "usually right; when wrong, probably a common label".</td></tr>
+    <tr><td><strong>Posterior</strong></td><td>The updated range of plausible answers after combining the prior with the evidence. Here: 6,000 plausible error tables.</td></tr>
+    <tr><td><strong>Partial pooling / hierarchical model</strong></td><td>Letting types with little evidence borrow from the overall pattern across all types.</td></tr>
+    <tr><td><strong>Base rate</strong></td><td>How common something is overall. It matters when turning "true → predicted" into "predicted → true".</td></tr>
+    <tr><td><strong>Bayes' rule</strong></td><td>The arithmetic for that turning-around, combining error rates with base rates.</td></tr>
+    <tr><td><strong>Imputation</strong></td><td>Filling in a plausible value where the true value is unknown.</td></tr>
+    <tr><td><strong>Multiple imputation</strong></td><td>Doing that filling-in many times, analysing each version, and combining the results so the uncertainty is kept rather than hidden.</td></tr>
+    <tr><td><strong>94% range (interval)</strong></td><td>The span containing the middle 94% of results across all plausible versions.</td></tr>
+    <tr><td><strong>Segmentation</strong></td><td>Splitting a dossier's pages into separate documents, based on predicted document starts.</td></tr>
+    <tr><td><strong>Point mode</strong></td><td>The shortcut: average error table and fractional counts. Fast; corrects bias; ranges too narrow.</td></tr>
+    <tr><td><strong>MI mode</strong></td><td>The full multiple-imputation procedure. Slower; corrects bias and gives honest ranges.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="code"><span class="num">11</span>Where this lives in the code</h2>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Step</th><th>File</th></tr></thead>
+  <tbody>
+    <tr><td>Which document types are tracked (11 types + "Other")</td><td><a href="../scripts/dossier_composition/common.py"><code>scripts/dossier_composition/common.py</code></a></td></tr>
+    <tr><td>Steps 1–2: document-type confusion matrix (Bayesian model)</td><td><a href="../scripts/dossier_composition/confusion_matrix.py"><code>scripts/dossier_composition/confusion_matrix.py</code></a></td></tr>
+    <tr><td>Steps 1–2: start-of-document confusion matrix (Bayesian model)</td><td><a href="../scripts/dossier_composition/start_page_confusion_matrix.py"><code>scripts/dossier_composition/start_page_confusion_matrix.py</code></a></td></tr>
+    <tr><td>Steps 3–4: turning around, rolling the dice, rebuilding documents</td><td><a href="../scripts/dossier_composition/imputation.py"><code>scripts/dossier_composition/imputation.py</code></a></td></tr>
+    <tr><td>Step 5: composition analyses (naive vs. corrected)</td><td><code>occurrence.py</code>, <code>co_occurrence.py</code>, <code>dispersion.py</code>, <code>order.py</code> in <code>scripts/dossier_composition/</code></td></tr>
+    <tr><td>Linking predictions to the dossier size data; shortcut and full corrections</td><td><a href="../scripts/dossier_size_model/doc_type_uncertainty_common.py"><code>scripts/dossier_size_model/doc_type_uncertainty_common.py</code></a></td></tr>
+    <tr><td>Corrected total-document-count models (shortcut)</td><td><a href="../scripts/dossier_size_model/aggregate_uncertainty.py"><code>scripts/dossier_size_model/aggregate_uncertainty.py</code></a></td></tr>
+    <tr><td>Corrected per-type models (shortcut and full MI)</td><td><code>doc_type_three_groups_uncertainty.py</code>, <code>doc_type_count_vs_presence_uncertainty.py</code> in <code>scripts/dossier_size_model/</code></td></tr>
+    <tr><td>Formal equations</td><td><a href="model_equations.tex"><code>docs/model_equations.tex</code></a></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="footer-note">Numbers in this document come from the current classifier's test results and analysis outputs (<code>data/dossier_composition/</code>, <code>data/dossier_size_model/uncertainty/</code>). They will change when the pipeline is rerun with a new classifier. The procedure stays the same.</p>
+
+</main>
+</body>
+</html>

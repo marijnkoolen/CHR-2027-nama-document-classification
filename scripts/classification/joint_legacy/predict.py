@@ -209,7 +209,7 @@ def main():
     parser.add_argument("--image-col", default="img_path")
     parser.add_argument("--text-source", choices=["pagexml", "markdown"], default="markdown",
                          help="markdown (default): Qwen2.5-VL markdown-mode OCR output, stripped of markup - see "
-                              "lib/markdown_text.py. pagexml: PageXML transcriptions, this project's original "
+                              "scripts/lib/markdown_text.py. pagexml: PageXML transcriptions, this project's original "
                               "text source.")
     parser.add_argument("--pagexml-col", default="text_path")
     parser.add_argument("--markdown-col", default="markdown_path", help="only used with --text-source markdown")

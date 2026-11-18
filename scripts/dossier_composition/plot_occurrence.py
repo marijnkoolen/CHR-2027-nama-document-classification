@@ -20,6 +20,12 @@ MUTED = "#898781"
 GRID = "#e1e0d9"
 SURFACE = "#fcfcfb"
 
+TICK_FONTSIZE = 16
+LABEL_FONTSIZE = 16
+TITLE_FONTSIZE = 18
+LEGEND_FONTSIZE = 16
+NOTE_FONTSIZE = 14
+
 
 def style_axes(ax):
     ax.set_facecolor(SURFACE)
@@ -27,7 +33,7 @@ def style_axes(ax):
         ax.spines[spine].set_visible(False)
     for spine in ("left", "bottom"):
         ax.spines[spine].set_color(MUTED)
-    ax.tick_params(colors=SECONDARY_INK, labelsize=9)
+    ax.tick_params(colors=SECONDARY_INK, labelsize=TICK_FONTSIZE)
     ax.grid(axis="x", color=GRID, linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
 
@@ -40,9 +46,11 @@ def main():
     table = pd.read_csv(f"{args.out_dir}/occurrence_summary.csv")
     table = table[table["doc_type"] != OTHER].sort_values("corrected_prevalence_mean", ascending=True)
     types = table["doc_type"].tolist()
+    types = [t.split(' (')[0] for t in types]
+    print(types)
     y = np.arange(len(types))
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 6.5))
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8.5))
 
     ax = axes[0]
     offset = 0.17
@@ -52,13 +60,13 @@ def main():
                label="corrected (94% HDI)", edgecolor="white", linewidth=0.5)
     ax.scatter(table["naive_prevalence"], y - offset, color=ORANGE, s=32, zorder=3, marker="D", label="naive")
     ax.set_yticks(y)
-    ax.set_yticklabels(types, fontsize=9)
-    ax.set_xlabel("prevalence (fraction of dossiers with >=1 instance)")
-    ax.set_title("Occurrence: naive vs. corrected", loc="left", color=INK, fontsize=11, fontweight="bold")
+    ax.set_yticklabels([t.replace(" (", "\n(") for t in types], fontsize=TICK_FONTSIZE)
+    ax.set_xlabel("prevalence (fraction of dossiers with >=1 instance)", fontsize=LABEL_FONTSIZE)
+    ax.set_title("Occurrence: naive vs. corrected", loc="left", color=INK, fontsize=TITLE_FONTSIZE, fontweight="bold")
     ax.set_xlim(0, 1)
     style_axes(ax)
-    ax.legend(frameon=False, fontsize=9, labelcolor=SECONDARY_INK, loc="upper left")
-    #ax.legend(frameon=False, fontsize=9, labelcolor=SECONDARY_INK, loc="lower right")
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, labelcolor=SECONDARY_INK, loc="upper left")
+    #ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, labelcolor=SECONDARY_INK, loc="lower right")
 
     ax = axes[1]
     ax.hlines(y + offset, table["corrected_mean_count_given_present_hdi_3"],
@@ -68,8 +76,8 @@ def main():
     ax.scatter(table["naive_mean_count_given_present"], y - offset, color=ORANGE, s=32, zorder=3, marker="D")
     ax.set_yticks(y)
     ax.set_yticklabels([])
-    ax.set_xlabel("mean instance count, given present")
-    ax.set_title("Typical multiplicity when present", loc="left", color=INK, fontsize=11, fontweight="bold")
+    ax.set_xlabel("mean instance count, given present", fontsize=LABEL_FONTSIZE)
+    ax.set_title("Typical multiplicity when present", loc="left", color=INK, fontsize=TITLE_FONTSIZE, fontweight="bold")
     ax.axvline(1, color=MUTED, linewidth=1, linestyle="--", zorder=1)
     style_axes(ax)
 
